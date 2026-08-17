@@ -1,0 +1,30 @@
+version: ontology_open_images_v6_v1
+min_object_count: 100
+min_predicate_count: 50
+max_object_leaves: 500
+max_predicates: 100
+max_aliases_per_label: 12
+
+aliases:
+  bike: bicycle
+  bikes: bicycle
+  cellphone: cell phone
+  mobile phone: cell phone
+  tv: television
+
+ignore_labels:
+  - object
+  - thing
+  - unknown
+ignore_predicates:
+  - unknown
+
+symmetric_predicates:
+  - next to
+  - beside
+  - near
+  - far
+  - touching
+
+fallback_object_group: other_object
+fallback_predicate_group: other_relation

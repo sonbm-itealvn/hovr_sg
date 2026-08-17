@@ -266,3 +266,114 @@ def generate_vg_ontology(
         "policy": policy,
     }
     return ontology, report
+
+
+def generate_ontology_from_statistics(
+    object_counts: Counter,
+    object_images: dict[str, set],
+    object_variants: dict[str, Counter],
+    predicate_counts: Counter,
+    predicate_images: dict[str, set],
+    predicate_variants: dict[str, Counter],
+    policy: dict | None = None,
+    source: str = "unknown",
+) -> tuple[dict, dict]:
+    """Build the same ontology schema from any dataset-specific statistics."""
+    policy = policy or {}
+    min_object = int(policy.get("min_object_count", 20))
+    min_predicate = int(policy.get("min_predicate_count", 20))
+    max_objects = int(policy.get("max_object_leaves", 0))
+    max_predicates = int(policy.get("max_predicates", 0))
+    ignored_objects = {singularize(normalize_label(x)) for x in policy.get("ignore_labels", [])}
+    ignored_predicates = {singularize(normalize_label(x)) for x in policy.get("ignore_predicates", [])}
+    object_candidates = [
+        key for key, count in object_counts.most_common()
+        if count >= min_object and key not in ignored_objects
+    ]
+    predicate_candidates = [
+        key for key, count in predicate_counts.most_common()
+        if count >= min_predicate and key not in ignored_predicates
+    ]
+    if max_objects > 0:
+        object_candidates = object_candidates[:max_objects]
+    if max_predicates > 0:
+        predicate_candidates = predicate_candidates[:max_predicates]
+
+    object_rules = _rules(policy, "object_group_rules", DEFAULT_OBJECT_GROUP_RULES)
+    predicate_rules = _rules(policy, "predicate_group_rules", DEFAULT_PREDICATE_GROUP_RULES)
+    object_groups = {}
+    object_parents = {}
+    for label in object_candidates:
+        group = infer_group(label, policy, object_rules, "other_object")
+        object_groups[group] = {"id": group, "name": group.replace("_", " "), "parents": []}
+        object_parents[label] = group
+    predicate_groups = {}
+    predicate_parents = {}
+    for predicate in predicate_candidates:
+        group = infer_group(predicate, policy, predicate_rules, "other_relation")
+        predicate_groups[group] = {"id": group, "name": group.replace("_", " "), "parents": []}
+        predicate_parents[predicate] = group
+
+    siblings_by_group = defaultdict(list)
+    for label, group in object_parents.items():
+        siblings_by_group[group].append(label)
+    max_aliases = int(policy.get("max_aliases_per_label", 12))
+    object_leaves = []
+    for label in object_candidates:
+        siblings = [item for item in siblings_by_group[object_parents[label]] if item != label]
+        object_leaves.append({
+            "id": label.replace(" ", "_"),
+            "name": label,
+            "parents": [object_parents[label]],
+            "aliases": _top_aliases(object_variants[label], label, max_aliases),
+            "siblings": [item.replace(" ", "_") for item in siblings],
+            "frequency": object_counts[label],
+            "image_frequency": len(object_images[label]),
+        })
+    symmetric = {normalize_label(item) for item in policy.get("symmetric_predicates", [])}
+    predicates = []
+    for predicate in predicate_candidates:
+        predicates.append({
+            "id": predicate.replace(" ", "_"),
+            "name": predicate,
+            "parents": [predicate_parents[predicate]],
+            "aliases": _top_aliases(predicate_variants[predicate], predicate, max_aliases),
+            "symmetric": predicate in symmetric,
+            "frequency": predicate_counts[predicate],
+            "image_frequency": len(predicate_images[predicate]),
+        })
+    ontology = {
+        "version": str(policy.get("version", f"ontology_{source}_v1")),
+        "object_groups": list(object_groups.values()),
+        "object_leaves": object_leaves,
+        "predicate_groups": list(predicate_groups.values()),
+        "predicates": predicates,
+    }
+    total_object = sum(object_counts.values())
+    total_predicate = sum(predicate_counts.values())
+    kept_object = sum(object_counts[label] for label in object_candidates)
+    kept_predicate = sum(predicate_counts[label] for label in predicate_candidates)
+    report = {
+        "version": ontology["version"],
+        "source": source,
+        "object": {
+            "raw_unique_labels": len(object_counts),
+            "selected_unique_labels": len(object_candidates),
+            "raw_instances": total_object,
+            "selected_instances": kept_object,
+            "coverage": kept_object / max(total_object, 1),
+            "dropped_instances": total_object - kept_object,
+            "top_labels": [{"label": label, "count": count} for label, count in object_counts.most_common(100)],
+        },
+        "predicate": {
+            "raw_unique_labels": len(predicate_counts),
+            "selected_unique_labels": len(predicate_candidates),
+            "raw_instances": total_predicate,
+            "selected_instances": kept_predicate,
+            "coverage": kept_predicate / max(total_predicate, 1),
+            "dropped_instances": total_predicate - kept_predicate,
+            "top_labels": [{"predicate": label, "count": count} for label, count in predicate_counts.most_common(100)],
+        },
+        "policy": policy,
+    }
+    return ontology, report

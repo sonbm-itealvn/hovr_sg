@@ -255,6 +255,24 @@ python tools/build_vg_ontology.py \
 
 Cần review coverage report và các mapping heuristic trước khi dùng ontology sinh tự động cho benchmark chính thức.
 
+Open Images V6 và GQA cũng có generator riêng; xem [`docs/DATASET_ONTOLOGY_GENERATION.md`](docs/DATASET_ONTOLOGY_GENERATION.md) để biết input format và command tương ứng:
+
+```bash
+python tools/build_open_images_ontology.py \
+  --boxes-csv /data/openimages/oidv6-train-annotations-bbox.csv \
+  --relations-csv /data/openimages/oidv6-train-annotations-vrd.csv \
+  --class-descriptions /data/openimages/class-descriptions-boxable.csv \
+  --policy configs/open_images_ontology_policy.example.yaml \
+  --ontology-output ontology/ontology_open_images_v6_v1.json \
+  --report-output reports/ontology_open_images_v6_v1.json
+
+python tools/build_gqa_ontology.py \
+  --scene-graphs /data/gqa/train_sceneGraphs.json \
+  --policy configs/gqa_ontology_policy.example.yaml \
+  --ontology-output ontology/ontology_gqa_v1.json \
+  --report-output reports/ontology_gqa_v1.json
+```
+
 ## 9. Tạo checkpoint model release
 
 Repository hiện cung cấp training lifecycle đầy đủ cho việc tạo checkpoint model release trên Google Colab: validation sau mỗi epoch, chọn `best.pt` theo metric cấu hình, `last.pt` để resume, optimizer/scaler state, ontology hash, code commit, manifest và validator checkpoint. Hướng dẫn chạy hoàn chỉnh nằm tại [`docs/COLAB_TRAINING.md`](docs/COLAB_TRAINING.md).

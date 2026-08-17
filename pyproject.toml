@@ -43,6 +43,8 @@ hovr-train = "scripts.train:main"
 hovr-eval = "scripts.evaluate:main"
 hovr-validate = "scripts.validate_checkpoint:main"
 hovr-build-ontology = "tools.build_vg_ontology:main"
+hovr-build-open-images-ontology = "tools.build_open_images_ontology:main"
+hovr-build-gqa-ontology = "tools.build_gqa_ontology:main"
 
 [tool.setuptools.packages.find]
 include = ["hovr_sg*", "tools*", "scripts*"]
