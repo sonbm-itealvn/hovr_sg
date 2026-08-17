@@ -161,19 +161,33 @@ GQA được khuyến nghị như auxiliary scene-graph data hoặc clean valida
 
 ## 4. Xây dựng split base/novel
 
-Tạo split `SS`, `NS`, `SN`, `NN` và novel-composition:
+Tạo các novelty split `SS`, `NS`, `SN`, `NN` đồng thời sinh `train.jsonl` và `val.jsonl`. Hai file train/val được lấy từ pool `SS` và tách theo `image_id`, nên không có image overlap:
 
 ```bash
 python tools/build_splits.py \
   --input data/vg_unified.jsonl data/oi_train_unified.jsonl \
-  --ontology ontology/ontology_v1.json \
+  --ontology ontology/ontology_vg_v1.json \
   --output-dir data/splits \
   --object-novel-ratio 0.20 \
   --relation-novel-ratio 0.20 \
+  --val-ratio 0.10 \
+  --train-val-source ss \
   --seed 42
 ```
 
-Converter split theo canonical label sau khi alias đã được chuẩn hóa. Nếu dùng strict zero-shot, cần loại novel label khỏi mọi object/relation annotation của train; caption pretraining chứa novel label phải được ghi thành protocol riêng.
+Command trên tạo:
+
+```text
+data/splits/train.jsonl
+data/splits/val.jsonl
+data/splits/ss.jsonl
+data/splits/ns.jsonl
+data/splits/sn.jsonl
+data/splits/nn.jsonl
+data/splits/split_manifest.json
+```
+
+`train.jsonl` và `val.jsonl` dùng cho training/validation thông thường. Mặc định `--train-val-source ss` giữ strict seen-seen training pool; nếu chỉ chạy pilot trên dataset nhỏ hoặc muốn train cả label novel, có thể dùng `--train-val-source all`, nhưng đó không còn là strict zero-shot training. `ss/ns/sn/nn` dùng cho đánh giá open-vocabulary novelty. Manifest ghi lại novel labels, số record/image, seed, val ratio, train-val source và kiểm tra train/val image overlap. Converter split theo canonical label sau khi alias đã được chuẩn hóa. Nếu dùng strict zero-shot, cần loại novel label khỏi mọi object/relation annotation của train; caption pretraining chứa novel label phải được ghi thành protocol riêng.
 
 ## 5. Training
 
