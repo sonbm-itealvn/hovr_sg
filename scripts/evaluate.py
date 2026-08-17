@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from hovr_sg.data import UnifiedSceneGraphDataset, collate_scene_graph
+from hovr_sg.evaluation import evaluate_scene_graph
 from hovr_sg.models import (
     CLIPTextPrototypeEncoder,
     HOVRSG,
@@ -100,6 +101,7 @@ def main() -> None:
     )
     loader = DataLoader(ds, batch_size=1, shuffle=False, collate_fn=collate_scene_graph)
     predictions = []
+    evaluation_records = []
     with torch.no_grad():
         for batch in tqdm(loader, desc="evaluation"):
             visual = encoder(batch["images"].to(device))
@@ -138,11 +140,14 @@ def main() -> None:
                 ],
                 "relations": triplets,
             })
+            evaluation_records.append(batch["samples"][0])
+    metrics = evaluate_scene_graph(evaluation_records, predictions, ontology)
     output = {
         "num_images": len(predictions),
         "predictions": predictions,
+        "metrics": metrics,
         "ontology": ontology.version,
-        "note": "Use project-specific COCO/SGG evaluator for AP/R@K.",
+        "note": "Object metrics are COCO-style AP; relation metrics are scene-graph Recall@K.",
     }
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")

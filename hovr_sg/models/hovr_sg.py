@@ -78,9 +78,40 @@ class SparseRelationDecoder(nn.Module):
             iou, (co[..., 0] - cs[..., 0]) / wo, (co[..., 1] - cs[..., 1]) / ho,
         ], dim=-1)
 
+    @staticmethod
+    def union_region_features(visual_memory: Tensor, boxes: Tensor, s: Tensor, o: Tensor) -> Tensor:
+        """Pool projected patch tokens whose centers fall inside each union box."""
+        bsz, num_tokens, dim = visual_memory.shape
+        side = int(num_tokens ** 0.5)
+        if side * side != num_tokens:
+            height, width = 1, num_tokens
+        else:
+            height = width = side
+        ys = (torch.arange(height, device=boxes.device, dtype=boxes.dtype) + 0.5) / height
+        xs = (torch.arange(width, device=boxes.device, dtype=boxes.dtype) + 0.5) / width
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+        centers = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1)
+        pair_boxes = boxes[:, s]
+        other_boxes = boxes[:, o]
+        union = torch.stack([
+            torch.minimum(pair_boxes[..., 0], other_boxes[..., 0]),
+            torch.minimum(pair_boxes[..., 1], other_boxes[..., 1]),
+            torch.maximum(pair_boxes[..., 2], other_boxes[..., 2]),
+            torch.maximum(pair_boxes[..., 3], other_boxes[..., 3]),
+        ], dim=-1)
+        inside = (
+            (centers[None, None, :, 0] >= union[..., None, 0])
+            & (centers[None, None, :, 0] <= union[..., None, 2])
+            & (centers[None, None, :, 1] >= union[..., None, 1])
+            & (centers[None, None, :, 1] <= union[..., None, 3])
+        ).to(visual_memory.dtype)
+        pooled = torch.einsum("bpn,bnd->bpd", inside, visual_memory)
+        return pooled / inside.sum(dim=-1, keepdim=True).clamp_min(1.0)
+
     def forward(
         self, slots: Tensor, boxes: Tensor, object_scores: Tensor,
         relation_text: Optional[Tensor] = None, top_m: int = 100, top_k_pairs: int = 256,
+        visual_memory: Optional[Tensor] = None,
     ) -> Dict[str, Tensor]:
         bsz, _, dim = slots.shape
         m = min(top_m, slots.shape[1])
@@ -94,8 +125,14 @@ class SparseRelationDecoder(nn.Module):
         idx_s, idx_o = idx_s[keep], idx_o[keep]
         s_feat, o_feat = selected[:, idx_s], selected[:, idx_o]
         geom = self.geometry(selected_boxes, idx_s, idx_o)
-        pair = self.pair_mlp(torch.cat([s_feat, o_feat, s_feat * o_feat,
-                                         torch.zeros_like(s_feat), geom], dim=-1))
+        if visual_memory is None:
+            raise ValueError("visual_memory is required to compute union-region relation features")
+        if visual_memory.ndim != 3 or visual_memory.shape[0] != bsz or visual_memory.shape[-1] != dim:
+            raise ValueError(
+                f"visual_memory must have shape [B, S, {dim}], got {tuple(visual_memory.shape)}"
+            )
+        union_feat = self.union_region_features(visual_memory, selected_boxes, idx_s, idx_o)
+        pair = self.pair_mlp(torch.cat([s_feat, o_feat, s_feat * o_feat, union_feat, geom], dim=-1))
         pair = self.context(pair)
         ness_all = self.relationness(pair).squeeze(-1)
         k = min(top_k_pairs, pair.shape[1])
@@ -107,6 +144,7 @@ class SparseRelationDecoder(nn.Module):
         z_rel = F.normalize(self.rel_proj(pair), dim=-1)
         output = {
             "pair_features": pair,
+            "union_features": torch.gather(union_feat, 1, top[..., None].expand(-1, -1, dim)),
             "relationness_logits": ness,
             "z_rel": z_rel,
             "subject_slot": s_idx,
@@ -179,7 +217,10 @@ class HOVRSG(nn.Module):
         objectness_logits = self.objectness_head(slots).squeeze(-1)
         object_scores = objectness_logits.sigmoid()
         obj = self.object_head(slots, leaf_text, group_text)
-        relations = self.relation_head(slots, boxes, object_scores, relation_text, top_m, top_k_pairs)
+        relations = self.relation_head(
+            slots, boxes, object_scores, relation_text=relation_text,
+            top_m=top_m, top_k_pairs=top_k_pairs, visual_memory=memory,
+        )
         return HOVRSGOutput(
             boxes=boxes, objectness_logits=objectness_logits, object_scores=object_scores,
             z_leaf=obj["z_leaf"], z_group=obj["z_group"],

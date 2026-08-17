@@ -213,7 +213,7 @@ python scripts/train.py \
   --output-dir runs/hovr_v1
 ```
 
-Có thể thay checkpoint CLIP bằng một model tương thích thông qua `--backbone-name`, hoặc mở fine-tuning có kiểm soát bằng `--train-backbone` hay `model.unfreeze_last_n_layers`. Checkpoint lưu encoder/model state, text prototypes, preprocessing và dimension đã resolve để evaluation không tự sinh lại prototype khác. Fallback `tiny_cnn` chỉ chứng minh data/model/loss plumbing; nó không đại diện cho open-vocabulary performance.
+Training hiện dùng Hungarian one-to-one matching kiểu DETR, union-region pooling cho relation pairs, stage scheduler `detector_warmup → hierarchical → relation → joint`, AMP khi chạy CUDA và train-only augmentation có cập nhật bounding boxes. Có thể thay checkpoint CLIP bằng model tương thích qua `--backbone-name`, hoặc mở fine-tuning có kiểm soát bằng `--train-backbone` hay `model.unfreeze_last_n_layers`. Checkpoint lưu encoder/model state, text prototypes, preprocessing, dimension đã resolve và stage metadata. Fallback `tiny_cnn` chỉ chứng minh data/model/loss plumbing; nó không đại diện cho open-vocabulary performance.
 
 ## 6. Evaluation
 
@@ -225,7 +225,7 @@ python scripts/evaluate.py \
   --output runs/hovr_v1/test_nn_metrics.json
 ```
 
-Metric tối thiểu cần báo cáo gồm object AP theo base/novel, harmonic mean, relation Recall@20/50/100, mean Recall, zero-shot triplet recall, group consistency, sibling confusion và calibration. Không dùng riêng UMAP/t-SNE để kết luận latent space đã tốt.
+Evaluation hiện xuất raw predictions cùng COCO-style object metrics `AP50`, `AP75`, `mAP@[.50:.95]` và SGG `Recall@20/50/100`, `mean Recall`. Các protocol base/novel, harmonic mean, zero-shot triplet recall, group consistency, sibling confusion và calibration vẫn cần evaluator chuyên biệt theo split/dataset của từng nghiên cứu; không dùng riêng UMAP/t-SNE để kết luận latent space đã tốt.
 
 ## 7. Gắn Grounding DINO/CLIP/SigLIP
 
@@ -242,7 +242,7 @@ relation_text: Tensor    # [num_predicates, d_latent]
 
 ## 8. Giới hạn hiện tại
 
-Package này là một nền tảng nghiên cứu có thể chạy và mở rộng, nhưng chưa bao gồm Hungarian matcher tối ưu hóa đầy đủ, COCO-style evaluator hoàn chỉnh và checkpoint VLM. Các phần này phụ thuộc phiên bản dataset, backbone và GPU/CUDA của dự án. Converter và unified schema đã được viết để giảm phần công việc thay đổi cấu hình dataset.
+Package này là một nền tảng nghiên cứu có thể chạy và mở rộng. Hungarian matcher, union-region relation features, multi-stage training, AMP, augmentation và evaluator COCO-style/SGG tối thiểu đã được nối vào pipeline. Các protocol đánh giá chuyên biệt như base/novel split, zero-shot triplet recall đầy đủ, calibration và Hungarian matcher có cost/matcher tinh chỉnh theo dataset vẫn phụ thuộc phiên bản dataset, backbone và GPU/CUDA của dự án. Converter và unified schema đã được viết để giảm phần công việc thay đổi cấu hình dataset.
 
 ## References
 
