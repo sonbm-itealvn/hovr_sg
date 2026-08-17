@@ -15,13 +15,21 @@ from hovr_sg.utils.ontology import Ontology
 
 
 class UnifiedSceneGraphDataset(Dataset):
-    def __init__(self, jsonl: str | Path, ontology: Ontology, image_root: str | Path | None = None, image_size: int = 256):
+    def __init__(
+        self,
+        jsonl: str | Path,
+        ontology: Ontology,
+        image_root: str | Path | None = None,
+        image_size: int = 224,
+        image_mean: tuple[float, float, float] = (0.485, 0.456, 0.406),
+        image_std: tuple[float, float, float] = (0.229, 0.224, 0.225),
+    ):
         self.records = [json.loads(line) for line in Path(jsonl).read_text(encoding="utf-8").splitlines() if line.strip()]
         self.ontology = ontology
         self.image_root = Path(image_root) if image_root else None
         self.transform = Compose([
             Resize((image_size, image_size)), ToTensor(),
-            Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            Normalize(list(image_mean), list(image_std)),
         ])
 
     def __len__(self) -> int:

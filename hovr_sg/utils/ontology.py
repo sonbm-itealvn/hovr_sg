@@ -44,6 +44,10 @@ class Ontology:
         self.group_to_idx = {k: i for i, k in enumerate(self.object_groups)}
         self.predicate_to_idx = {k: i for i, k in enumerate(self.predicates)}
         self.predicate_group_to_idx = {k: i for i, k in enumerate(self.predicate_groups)}
+        self.leaf_to_groups: Dict[int, List[int]] = {
+            self.leaf_to_idx[leaf]: [self.group_to_idx[parent] for parent in info.parents if parent in self.group_to_idx]
+            for leaf, info in self.object_leaves.items()
+        }
         self.alias_to_leaf: Dict[str, str] = {}
         for key, info in self.object_leaves.items():
             for alias in [key, info.name, *info.aliases]:

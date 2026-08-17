@@ -1,9 +1,16 @@
 seed: 42
 
 model:
-  visual_dim: 256
+  # Research default: pretrained CLIP vision patch tokens. Use tiny_cnn only for smoke tests.
+  backbone: clip
+  backbone_name: openai/clip-vit-base-patch32
+  local_files_only: false
+  train_backbone: false
+  unfreeze_last_n_layers: 0
+  # These values are resolved/validated from the loaded checkpoint at startup.
+  visual_dim: 768
   d_model: 256
-  d_latent: 256
+  d_latent: 512
   num_queries: 64
   top_m_objects: 16
   top_k_pairs: 64
@@ -14,7 +21,7 @@ training:
   num_workers: 0
   lr: 0.0001
   weight_decay: 0.0001
-  image_size: 256
+  image_size: 224
   device: auto
   amp: false
   save_every: 1
@@ -37,7 +44,8 @@ stages:
 
 ontology:
   path: ontology/ontology_v1.json
-  text_dim: 256
+  text_dim: 512
+  prompt_template: "a photo of a {label}"
   trainable_prototypes: false
 
 paths:

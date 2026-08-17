@@ -64,13 +64,13 @@ python -m pip install --upgrade pip
 pip install -e .
 ```
 
-Nếu muốn dùng text encoder CLIP từ Hugging Face:
+Dependency mặc định đã bao gồm `transformers` và `safetensors` để tải CLIP pretrained. Có thể cài project bằng:
 
 ```bash
-pip install -e ".[vlm]"
+pip install -e .
 ```
 
-Nếu chỉ cần chạy unit test và fallback smoke test, phần dependencies cơ bản là đủ.
+Nếu chỉ cần chạy unit test hoặc fallback smoke test trong môi trường không có model weights, vẫn có thể dùng `--backbone tiny_cnn`; chế độ này không tạo text prototypes ngôn ngữ thực.
 
 ## 2. Chuẩn bị ontology
 
@@ -186,7 +186,9 @@ Cấu hình mặc định nằm trong `configs/hovr_sg.yaml`. Training gồm cá
 | `relation` | Sparse pair, relationness, predicate embedding | Freeze detector ban đầu |
 | `joint` | Fine-tune end-to-end, giảm train–test mismatch | LoRA/unfreeze block cuối |
 
-Chạy smoke training với fallback CNN trên unified JSONL:
+Mặc định, training dùng CLIP ViT-B/32 pretrained (`openai/clip-vit-base-patch32`). Vision tower trả về patch tokens có `visual_dim=768`; text tower tương ứng tạo prototypes có `projection_dim=512`, và HOVR-SG học các projection `d_model -> d_latent` để hai phía nằm trong cùng không gian cosine. Các dimension này được đọc và kiểm tra từ checkpoint, không nên thay riêng một scalar trong YAML.
+
+Để chạy smoke test không tải pretrained weights, phải chọn fallback một cách tường minh:
 
 ```bash
 python scripts/train.py \
@@ -194,10 +196,12 @@ python scripts/train.py \
   --train-jsonl data_sample/train.jsonl \
   --val-jsonl data_sample/val.jsonl \
   --ontology ontology/ontology_v1.json \
-  --output-dir runs/smoke
+  --output-dir runs/smoke \
+  --backbone tiny_cnn \
+  --epochs 1
 ```
 
-Chạy dataset thật:
+Chạy thực nghiệm mở vocabulary:
 
 ```bash
 python scripts/train.py \
@@ -206,11 +210,10 @@ python scripts/train.py \
   --val-jsonl data/splits/val.jsonl \
   --ontology ontology/ontology_v1.json \
   --image-root /data/images \
-  --output-dir runs/hovr_v1 \
-  --backbone pretrained_vlm
+  --output-dir runs/hovr_v1
 ```
 
-`pretrained_vlm` trong skeleton là interface để nối encoder thực tế. Fallback `tiny_cnn` chỉ chứng minh data/model/loss plumbing; nó không đại diện cho open-vocabulary performance.
+Có thể thay checkpoint CLIP bằng một model tương thích thông qua `--backbone-name`, hoặc mở fine-tuning có kiểm soát bằng `--train-backbone` hay `model.unfreeze_last_n_layers`. Checkpoint lưu encoder/model state, text prototypes, preprocessing và dimension đã resolve để evaluation không tự sinh lại prototype khác. Fallback `tiny_cnn` chỉ chứng minh data/model/loss plumbing; nó không đại diện cho open-vocabulary performance.
 
 ## 6. Evaluation
 
@@ -226,7 +229,7 @@ Metric tối thiểu cần báo cáo gồm object AP theo base/novel, harmonic m
 
 ## 7. Gắn Grounding DINO/CLIP/SigLIP
 
-Skeleton tách `visual_features` khỏi text prototypes. Để gắn VLM thực tế, triển khai adapter trả về:
+Source hiện đã có adapter CLIP pretrained chạy end-to-end. Nếu thay bằng Grounding DINO, SigLIP hoặc encoder tương đương, adapter phải trả về:
 
 ```python
 visual_features: Tensor  # [B, S, visual_dim]
@@ -235,7 +238,7 @@ group_text: Tensor       # [num_group, d_latent]
 relation_text: Tensor    # [num_predicates, d_latent]
 ```
 
-Text prototypes phải được encode cùng text encoder với region projection hoặc được map qua một projection layer đã học. Không trộn trực tiếp CLIP text embedding với SigLIP region embedding nếu chưa có alignment layer.
+`visual_dim` phải đúng với chiều cuối của visual tokens. `d_latent` phải đúng với chiều cuối của cả ba loại text prototypes; detector head và relation head đều nhận query width `d_model` rồi chiếu vào không gian này. Text prototypes phải được encode cùng text encoder với region projection hoặc được map qua một projection layer đã học. Không trộn trực tiếp CLIP text embedding với SigLIP region embedding nếu chưa có alignment layer.
 
 ## 8. Giới hạn hiện tại
 

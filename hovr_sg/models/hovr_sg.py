@@ -26,8 +26,9 @@ class MLP(nn.Module):
 class HierarchicalPrototypeHead(nn.Module):
     def __init__(self, d_model: int, d_latent: int = 512):
         super().__init__()
-        self.leaf_proj = nn.Linear(d_model, d_latent)
-        self.group_proj = nn.Linear(d_model, d_latent)
+        self.d_latent = int(d_latent)
+        self.leaf_proj = nn.Linear(d_model, self.d_latent)
+        self.group_proj = nn.Linear(d_model, self.d_latent)
         self.log_tau_leaf = nn.Parameter(torch.log(torch.tensor(0.07)))
         self.log_tau_group = nn.Parameter(torch.log(torch.tensor(0.07)))
 
@@ -133,22 +134,43 @@ class HOVRSGOutput:
 class HOVRSG(nn.Module):
     def __init__(self, visual_dim: int, d_model: int, num_queries: int, d_latent: int = 512):
         super().__init__()
-        self.input_proj = nn.Linear(visual_dim, d_model)
-        self.query_embed = nn.Embedding(num_queries, d_model)
+        if d_model % 8 != 0:
+            raise ValueError("d_model must be divisible by 8 for the transformer heads")
+        self.visual_dim = int(visual_dim)
+        self.d_model = int(d_model)
+        self.d_latent = int(d_latent)
+        self.input_proj = nn.Linear(self.visual_dim, self.d_model)
+        self.query_embed = nn.Embedding(num_queries, self.d_model)
         layer = nn.TransformerDecoderLayer(
-            d_model=d_model, nhead=8, dim_feedforward=4 * d_model,
+            d_model=self.d_model, nhead=8, dim_feedforward=4 * self.d_model,
             batch_first=True, norm_first=True,
         )
         self.query_decoder = nn.TransformerDecoder(layer, num_layers=6)
-        self.box_head = MLP(d_model, d_model, 4, depth=3)
-        self.objectness_head = nn.Linear(d_model, 1)
-        self.object_head = HierarchicalPrototypeHead(d_model, d_latent)
-        self.relation_head = SparseRelationDecoder(d_model, d_latent)
+        self.box_head = MLP(self.d_model, self.d_model, 4, depth=3)
+        self.objectness_head = nn.Linear(self.d_model, 1)
+        self.object_head = HierarchicalPrototypeHead(self.d_model, self.d_latent)
+        self.relation_head = SparseRelationDecoder(self.d_model, self.d_latent)
 
     def forward(
         self, visual_features: Tensor, leaf_text: Tensor, group_text: Tensor,
         relation_text: Optional[Tensor] = None, top_m: int = 100, top_k_pairs: int = 256,
     ) -> HOVRSGOutput:
+        if visual_features.ndim != 3 or visual_features.shape[-1] != self.visual_dim:
+            raise ValueError(
+                f"Expected visual features [B, S, {self.visual_dim}], "
+                f"got {tuple(visual_features.shape)}"
+            )
+        for name, prototype in (("leaf_text", leaf_text), ("group_text", group_text)):
+            if prototype.ndim != 2 or prototype.shape[-1] != self.d_latent:
+                raise ValueError(
+                    f"{name} must have shape [classes, {self.d_latent}], "
+                    f"got {tuple(prototype.shape)}"
+                )
+        if relation_text is not None and (relation_text.ndim != 2 or relation_text.shape[-1] != self.d_latent):
+            raise ValueError(
+                f"relation_text must have shape [predicates, {self.d_latent}], "
+                f"got {tuple(relation_text.shape)}"
+            )
         memory = self.input_proj(visual_features)
         bsz = memory.shape[0]
         queries = self.query_embed.weight[None].expand(bsz, -1, -1)
