@@ -240,7 +240,22 @@ relation_text: Tensor    # [num_predicates, d_latent]
 
 `visual_dim` phải đúng với chiều cuối của visual tokens. `d_latent` phải đúng với chiều cuối của cả ba loại text prototypes; detector head và relation head đều nhận query width `d_model` rồi chiếu vào không gian này. Text prototypes phải được encode cùng text encoder với region projection hoặc được map qua một projection layer đã học. Không trộn trực tiếp CLIP text embedding với SigLIP region embedding nếu chưa có alignment layer.
 
-## 8. Tạo checkpoint model release
+## 8. Sinh ontology cho Visual Genome
+
+Công cụ `tools/build_vg_ontology.py` thống kê object/predicate frequency, canonicalize alias, sinh groups/siblings và xuất coverage report. Hướng dẫn đầy đủ nằm tại [`docs/VG_ONTOLOGY_GENERATION.md`](docs/VG_ONTOLOGY_GENERATION.md). Ví dụ:
+
+```bash
+python tools/build_vg_ontology.py \
+  --objects /data/visual_genome/objects.json \
+  --relationships /data/visual_genome/relationships.json \
+  --policy configs/vg_ontology_policy.example.yaml \
+  --ontology-output ontology/ontology_vg_v1.json \
+  --report-output reports/ontology_vg_v1.json
+```
+
+Cần review coverage report và các mapping heuristic trước khi dùng ontology sinh tự động cho benchmark chính thức.
+
+## 9. Tạo checkpoint model release
 
 Repository hiện cung cấp training lifecycle đầy đủ cho việc tạo checkpoint model release trên Google Colab: validation sau mỗi epoch, chọn `best.pt` theo metric cấu hình, `last.pt` để resume, optimizer/scaler state, ontology hash, code commit, manifest và validator checkpoint. Hướng dẫn chạy hoàn chỉnh nằm tại [`docs/COLAB_TRAINING.md`](docs/COLAB_TRAINING.md).
 

@@ -1,0 +1,63 @@
+version: ontology_vg_v1
+
+# Increase these values for a compact vocabulary; lower them only for a pilot run.
+min_object_count: 100
+min_predicate_count: 100
+max_object_leaves: 500
+max_predicates: 100
+max_aliases_per_label: 12
+
+# Canonical labels override the default lowercase/singular normalization.
+aliases:
+  bike: bicycle
+  bikes: bicycle
+  automobile: car
+  automobiles: car
+  cellphone: cell phone
+  mobile phone: cell phone
+  tv: television
+  t v: television
+  sofa: couch
+  sofas: couch
+
+ignore_labels:
+  - thing
+  - object
+  - stuff
+  - unknown
+
+ignore_predicates:
+  - ""
+  - unknown
+
+symmetric_predicates:
+  - next to
+  - beside
+  - near
+  - far
+  - touching
+
+fallback_object_group: other_object
+fallback_predicate_group: other_relation
+
+object_group_rules:
+  - group: person
+    pattern: "\\b(man|woman|boy|girl|person|people|human|child|children|baby|kid)\\b"
+  - group: animal
+    pattern: "\\b(dog|cat|bird|horse|sheep|cow|animal|bear|elephant|zebra|giraffe|lion|tiger)\\b"
+  - group: vehicle
+    pattern: "\\b(car|bus|truck|vehicle|bike|bicycle|motorcycle|train|boat|airplane|plane)\\b"
+  - group: furniture
+    pattern: "\\b(chair|sofa|couch|table|desk|bed|bench|cabinet|furniture|shelf)\\b"
+  - group: building
+    pattern: "\\b(building|house|home|window|door|wall|roof|room|street|road)\\b"
+
+predicate_group_rules:
+  - group: contact_action
+    pattern: "\\b(hold|holding|carry|carrying|wear|wearing|touch|touching|sit|sitting|ride|riding)\\b"
+  - group: containment
+    pattern: "\\b(in|inside|contain|contains|within|cover|covered)\\b"
+  - group: spatial
+    pattern: "\\b(on|under|above|below|over|hanging|left|right|front|behind|back|next|beside|near|far)\\b"
+  - group: possession
+    pattern: "\\b(has|have|with|owned|belong)\\b"
