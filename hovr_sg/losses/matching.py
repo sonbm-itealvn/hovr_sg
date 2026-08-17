@@ -58,7 +58,7 @@ class HungarianMatcher:
                 + self.cost_bbox * bbox_cost
                 + self.cost_objectness * objectness_cost
             )
-            query_idx, target_idx = linear_sum_assignment(cost.cpu().numpy())
+            query_idx, target_idx = linear_sum_assignment(cost.float().cpu().numpy())
             matches.append((
                 torch.as_tensor(query_idx, dtype=torch.long, device=outputs.boxes.device),
                 torch.as_tensor(target_idx, dtype=torch.long, device=outputs.boxes.device),

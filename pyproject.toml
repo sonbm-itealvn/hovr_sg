@@ -41,6 +41,7 @@ hovr-convert-gqa = "tools.convert_gqa:main"
 hovr-inspect = "scripts.inspect_dataset:main"
 hovr-train = "scripts.train:main"
 hovr-eval = "scripts.evaluate:main"
+hovr-validate = "scripts.validate_checkpoint:main"
 
 [tool.setuptools.packages.find]
 include = ["hovr_sg*", "tools*", "scripts*"]

@@ -201,7 +201,7 @@ python scripts/train.py \
   --epochs 1
 ```
 
-Chạy thực nghiệm mở vocabulary:
+Chạy thực nghiệm mở vocabulary và tạo `best.pt`:
 
 ```bash
 python scripts/train.py \
@@ -240,9 +240,13 @@ relation_text: Tensor    # [num_predicates, d_latent]
 
 `visual_dim` phải đúng với chiều cuối của visual tokens. `d_latent` phải đúng với chiều cuối của cả ba loại text prototypes; detector head và relation head đều nhận query width `d_model` rồi chiếu vào không gian này. Text prototypes phải được encode cùng text encoder với region projection hoặc được map qua một projection layer đã học. Không trộn trực tiếp CLIP text embedding với SigLIP region embedding nếu chưa có alignment layer.
 
-## 8. Giới hạn hiện tại
+## 8. Tạo checkpoint model release
 
-Package này là một nền tảng nghiên cứu có thể chạy và mở rộng. Hungarian matcher, union-region relation features, multi-stage training, AMP, augmentation và evaluator COCO-style/SGG tối thiểu đã được nối vào pipeline. Các protocol đánh giá chuyên biệt như base/novel split, zero-shot triplet recall đầy đủ, calibration và Hungarian matcher có cost/matcher tinh chỉnh theo dataset vẫn phụ thuộc phiên bản dataset, backbone và GPU/CUDA của dự án. Converter và unified schema đã được viết để giảm phần công việc thay đổi cấu hình dataset.
+Repository hiện cung cấp training lifecycle đầy đủ cho việc tạo checkpoint model release trên Google Colab: validation sau mỗi epoch, chọn `best.pt` theo metric cấu hình, `last.pt` để resume, optimizer/scaler state, ontology hash, code commit, manifest và validator checkpoint. Hướng dẫn chạy hoàn chỉnh nằm tại [`docs/COLAB_TRAINING.md`](docs/COLAB_TRAINING.md).
+
+> `best.pt` là checkpoint chính thức của **một lần training cụ thể** trên dataset/split/ontology/config/seed đã ghi trong manifest. Sửa source không tự tạo ra chất lượng pretrained; cần thực sự chạy training trên dataset đủ lớn và báo cáo validation/test metrics.
+
+Các protocol chuyên biệt như base/novel split, zero-shot triplet recall đầy đủ, calibration, harmonic mean và evaluator dataset-specific vẫn cần cấu hình theo benchmark thực tế. Converter và unified schema được giữ lại để giảm phần công việc thay đổi dữ liệu.
 
 ## References
 

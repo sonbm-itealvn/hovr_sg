@@ -67,5 +67,9 @@ paths:
   output_dir: runs/default
   checkpoint: null
 
+validation:
+  frequency: 1
+  selection_metric: object_mAP50_95
+
 evaluation:
   top_k_triplets: [20, 50, 100]

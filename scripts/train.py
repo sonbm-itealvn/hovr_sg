@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 from typing import Dict, List
 
@@ -11,6 +13,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from hovr_sg.data import UnifiedSceneGraphDataset, collate_scene_graph
+from hovr_sg.evaluation.predict import predict_dataset
 from hovr_sg.losses import HungarianMatcher
 from hovr_sg.losses.hovr_losses import ancestor_consistency
 from hovr_sg.models import (
@@ -263,6 +266,60 @@ def stage_loss_weights(stage: str, weights: dict) -> dict:
     return stage_weights
 
 
+def file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def build_checkpoint(
+    epoch: int, stage: str, stage_schedule, amp_enabled: bool,
+    encoder, model, prototypes, optimizer, scaler, cfg: dict,
+    ontology: Ontology, ontology_path: str, best_score: float, val_metrics: dict,
+):
+    model_cfg = cfg.get("model", {})
+    return {
+        "checkpoint_type": "hovr_sg_official_checkpoint",
+        "format_version": 2,
+        "epoch": epoch,
+        "stage": stage,
+        "stage_schedule": stage_schedule,
+        "amp_enabled": amp_enabled,
+        "encoder": encoder.state_dict(),
+        "model": model.state_dict(),
+        "prototypes": {name: tensor.detach().cpu() for name, tensor in prototypes.state_dict().items()},
+        "optimizer": optimizer.state_dict(),
+        "scaler": scaler.state_dict() if scaler.is_enabled() else None,
+        "ontology": ontology.version,
+        "ontology_path": str(ontology_path),
+        "ontology_sha256": file_sha256(ontology_path),
+        "config": cfg,
+        "git_commit": git_commit(),
+        "best_score": float(best_score),
+        "val_metrics": dict(val_metrics),
+        "resolved": {
+            "visual_dim": int(model_cfg["visual_dim"]),
+            "text_dim": int(model_cfg["d_latent"]),
+            "backbone": str(model_cfg.get("backbone", "clip")),
+            "backbone_name": model_cfg.get("backbone_name"),
+            "image_size": model_cfg.get("image_size"),
+            "image_mean": model_cfg.get("image_mean"),
+            "image_std": model_cfg.get("image_std"),
+        },
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -276,6 +333,7 @@ def main() -> None:
     parser.add_argument("--backbone", default=None, choices=["clip", "pretrained_vlm", "tiny_cnn"])
     parser.add_argument("--backbone-name", default=None)
     parser.add_argument("--train-backbone", action="store_true")
+    parser.add_argument("--resume", default=None, help="Resume from a last.pt/checkpoint path")
     args = parser.parse_args()
     cfg = load_yaml(args.config)
     cfg = copy.deepcopy(cfg)
@@ -311,6 +369,17 @@ def main() -> None:
         num_workers=int(cfg.get("training", {}).get("num_workers", 0)),
         collate_fn=collate_scene_graph,
     )
+    val_loader = None
+    if args.val_jsonl:
+        val_ds = UnifiedSceneGraphDataset(
+            args.val_jsonl, ontology, args.image_root, image_size, image_mean, image_std,
+            train=False, augmentation=cfg.get("augmentation", {}),
+        )
+        val_loader = DataLoader(
+            val_ds, batch_size=1, shuffle=False,
+            num_workers=int(cfg.get("training", {}).get("num_workers", 0)),
+            collate_fn=collate_scene_graph,
+        )
 
     prototypes = build_prototypes(cfg, ontology, device)
     model = HOVRSG(
@@ -334,9 +403,31 @@ def main() -> None:
         scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    current_epoch = 0
+
+    resume_state = None
+    if args.resume:
+        resume_state = torch.load(args.resume, map_location="cpu", weights_only=False)
+        if resume_state.get("checkpoint_type") not in {None, "hovr_sg_official_checkpoint"}:
+            raise ValueError("The resume file is not a compatible HOVR-SG checkpoint")
+        encoder.load_state_dict(resume_state["encoder"])
+        model.load_state_dict(resume_state["model"])
+        if resume_state.get("prototypes"):
+            prototypes.load_state_dict(resume_state["prototypes"], strict=False)
+
+    resume_epoch = int(resume_state.get("epoch", 0)) if resume_state else 0
+    best_score = float(resume_state.get("best_score", float("-inf"))) if resume_state else float("-inf")
+    best_metrics = dict(resume_state.get("val_metrics", {})) if resume_state else {}
+    history = []
+    completed_before = 0
+    selection_metric = str(cfg.get("validation", {}).get("selection_metric", "object_mAP50_95"))
+    val_frequency = max(1, int(cfg.get("validation", {}).get("frequency", 1)))
 
     for stage_name, stage_epochs in stage_schedule:
+        stage_start = completed_before
+        stage_end = completed_before + stage_epochs
+        completed_before = stage_end
+        if resume_epoch >= stage_end:
+            continue
         configure_stage(stage_name, encoder, model, model_cfg)
         trainable_params = [
             parameter for module in (encoder, model, prototypes)
@@ -347,9 +438,14 @@ def main() -> None:
             lr=float(cfg.get("training", {}).get("lr", 1e-4)),
             weight_decay=float(cfg.get("training", {}).get("weight_decay", 1e-4)),
         )
+        if resume_state and resume_state.get("stage") == stage_name and resume_state.get("optimizer"):
+            optimizer.load_state_dict(resume_state["optimizer"])
+            if scaler.is_enabled() and resume_state.get("scaler"):
+                scaler.load_state_dict(resume_state["scaler"])
         active_weights = stage_loss_weights(stage_name, weights)
-        for _ in range(stage_epochs):
-            current_epoch += 1
+        local_start = max(0, resume_epoch - stage_start)
+        for local_epoch in range(local_start, stage_epochs):
+            current_epoch = stage_start + local_epoch + 1
             encoder.train()
             model.train()
             prototypes.train()
@@ -384,30 +480,57 @@ def main() -> None:
                     optimizer.step()
                 running += float(terms["total"].detach())
                 progress.set_postfix(stage=stage_name, loss=f"{running / max(progress.n, 1):.4f}")
-            checkpoint = {
-                "epoch": current_epoch,
-                "stage": stage_name,
-                "stage_schedule": stage_schedule,
-                "amp_enabled": amp_enabled,
-                "encoder": encoder.state_dict(),
-                "model": model.state_dict(),
-                "prototypes": {name: tensor.detach().cpu() for name, tensor in prototypes.state_dict().items()},
-                "ontology": ontology.version,
-                "config": cfg,
-                "resolved": {
-                    "visual_dim": int(model_cfg["visual_dim"]),
-                    "text_dim": int(model_cfg["d_latent"]),
-                    "backbone": str(model_cfg.get("backbone", "clip")),
-                    "backbone_name": model_cfg.get("backbone_name"),
-                },
-            }
+
+            val_metrics = {}
+            if val_loader is not None and (current_epoch % val_frequency == 0 or current_epoch == epochs):
+                _, _, val_metrics = predict_dataset(
+                    encoder, model, prototypes, val_loader, device, ontology,
+                    top_m=int(model_cfg.get("top_m_objects", 16)),
+                    top_k_pairs=int(model_cfg.get("top_k_pairs", 64)),
+                    desc=f"validation {current_epoch}/{epochs}",
+                )
+            score = float(val_metrics.get(selection_metric, float("-inf")))
+            if val_loader is None:
+                score = float(current_epoch)
+            if score > best_score:
+                best_score = score
+                best_metrics = dict(val_metrics)
+            checkpoint = build_checkpoint(
+                current_epoch, stage_name, stage_schedule, amp_enabled,
+                encoder, model, prototypes, optimizer, scaler, cfg,
+                ontology, args.ontology, best_score, val_metrics,
+            )
             torch.save(checkpoint, out_dir / "last.pt")
+            if score >= best_score and (val_loader is not None or current_epoch == epochs):
+                torch.save(checkpoint, out_dir / "best.pt")
+                (out_dir / "best_manifest.json").write_text(
+                    json.dumps({
+                        "checkpoint": "best.pt",
+                        "checkpoint_type": checkpoint["checkpoint_type"],
+                        "format_version": checkpoint["format_version"],
+                        "epoch": current_epoch,
+                        "selection_metric": selection_metric,
+                        "selection_score": score,
+                        "metrics": val_metrics,
+                        "git_commit": checkpoint["git_commit"],
+                        "ontology_sha256": checkpoint["ontology_sha256"],
+                    }, indent=2), encoding="utf-8",
+                )
+            history.append({
+                "epoch": current_epoch, "stage": stage_name,
+                "train_loss": running / max(len(loader), 1),
+                "validation": val_metrics, "selection_score": score,
+            })
+
+    if not (out_dir / "best.pt").exists() and (out_dir / "last.pt").exists():
+        torch.save(torch.load(out_dir / "last.pt", map_location="cpu", weights_only=False), out_dir / "best.pt")
     (out_dir / "training_summary.json").write_text(
         json.dumps({
             "epochs": epochs, "device": str(device), "amp_enabled": amp_enabled,
-            "stage_schedule": stage_schedule, "config": cfg,
-        }, indent=2),
-        encoding="utf-8",
+            "stage_schedule": stage_schedule, "selection_metric": selection_metric,
+            "best_score": best_score, "best_metrics": best_metrics,
+            "resumed_from": args.resume, "history": history, "config": cfg,
+        }, indent=2), encoding="utf-8",
     )
 
 

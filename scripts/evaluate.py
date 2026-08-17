@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from hovr_sg.data import UnifiedSceneGraphDataset, collate_scene_graph
-from hovr_sg.evaluation import evaluate_scene_graph
+from hovr_sg.evaluation.predict import predict_dataset
 from hovr_sg.models import (
     CLIPTextPrototypeEncoder,
     HOVRSG,
@@ -100,48 +100,12 @@ def main() -> None:
         args.jsonl, ontology, args.image_root, image_size, image_mean, image_std
     )
     loader = DataLoader(ds, batch_size=1, shuffle=False, collate_fn=collate_scene_graph)
-    predictions = []
-    evaluation_records = []
-    with torch.no_grad():
-        for batch in tqdm(loader, desc="evaluation"):
-            visual = encoder(batch["images"].to(device))
-            out = model(
-                visual, prototypes.leaf, prototypes.groups, prototypes.relations,
-                int(mc.get("top_m_objects", 16)), int(mc.get("top_k_pairs", 64)),
-            )
-            leaf_prob = out.leaf_logits.softmax(-1)[0]
-            group_prob = out.group_logits.sigmoid()[0]
-            obj_score, obj_label = leaf_prob.max(-1)
-            rel_prob = out.relations.get("relation_logits")
-            triplets = []
-            if rel_prob is not None:
-                rel_prob = rel_prob.softmax(-1)[0]
-                for k in range(rel_prob.shape[0]):
-                    r_score, r_label = rel_prob[k].max(-1)
-                    s = int(out.relations["subject_slot"][0, k])
-                    o = int(out.relations["object_slot"][0, k])
-                    triplets.append({
-                        "subject_slot": s,
-                        "predicate": ontology.predicate_names()[int(r_label)],
-                        "object_slot": o,
-                        "score": float(r_score * out.relations["relationness_logits"][0, k].sigmoid()),
-                    })
-            predictions.append({
-                "image_id": batch["samples"][0]["image_id"],
-                "objects": [
-                    {
-                        "slot": i,
-                        "label": ontology.leaf_names()[int(obj_label[i])],
-                        "score": float(obj_score[i]),
-                        "group_scores": group_prob[i].tolist(),
-                        "box": out.boxes[0, i].tolist(),
-                    }
-                    for i in range(len(obj_label)) if float(obj_score[i]) > 0.05
-                ],
-                "relations": triplets,
-            })
-            evaluation_records.append(batch["samples"][0])
-    metrics = evaluate_scene_graph(evaluation_records, predictions, ontology)
+    _, predictions, metrics = predict_dataset(
+        encoder, model, prototypes, loader, device, ontology,
+        top_m=int(mc.get("top_m_objects", 16)),
+        top_k_pairs=int(mc.get("top_k_pairs", 64)),
+        desc="evaluation",
+    )
     output = {
         "num_images": len(predictions),
         "predictions": predictions,
