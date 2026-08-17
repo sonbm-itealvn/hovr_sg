@@ -50,6 +50,32 @@ Lệnh dưới đây dùng CLIP pretrained mặc định, augmentation train-onl
   --device cuda
 ```
 
+### Cấu hình ngắn cho Colab T4
+
+Đoạn cấu hình trong ảnh không đặt số epoch. `validation.frequency: 1` chỉ có nghĩa là validation sau mỗi epoch; `selection_metric: relation_Recall@50` chỉ quyết định metric dùng để chọn `best.pt`; `training.amp: true` bật mixed precision trên CUDA/T4.
+
+Nếu bạn chỉ có khoảng 4 giờ 30 phút, đặt trong cell tạo config:
+
+```python
+EPOCHS = 2
+config['training']['epochs'] = EPOCHS
+config['training']['amp'] = True
+config['validation']['frequency'] = 1
+config['validation']['selection_metric'] = 'object_mAP50_95'
+```
+
+Với stage schedule mặc định `2 + 2 + 3 + 3`, chạy 2 epoch sẽ chỉ hoàn tất `detector_warmup`; relation head và joint stage chưa được huấn luyện đầy đủ. Đây là checkpoint thử nghiệm/khởi đầu, chưa nên xem là model scene-graph hoàn chỉnh. Nếu muốn 2 epoch có cả một bước joint nhanh, có thể dùng schedule rút gọn:
+
+```yaml
+stages:
+  detector_warmup_epochs: 1
+  hierarchical_epochs: 0
+  relation_epochs: 0
+  joint_epochs: 1
+```
+
+Cấu hình rút gọn này phù hợp để kiểm tra toàn pipeline trên T4, nhưng chất lượng thường thấp hơn training đủ 10 epoch. Có thể chạy tiếp từ `last.pt` bằng `--resume` sau khi còn thời gian hoặc phiên Colab mới.
+
 Các artifact quan trọng sau khi hoàn tất:
 
 | File | Ý nghĩa |
