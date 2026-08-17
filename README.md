@@ -289,7 +289,7 @@ python tools/build_gqa_ontology.py \
 
 ## 9. Tạo checkpoint model release
 
-Repository hiện cung cấp training lifecycle đầy đủ cho việc tạo checkpoint model release trên Google Colab: validation sau mỗi epoch, chọn `best.pt` theo metric cấu hình, `last.pt` để resume, optimizer/scaler state, ontology hash, code commit, manifest và validator checkpoint. Hướng dẫn chạy hoàn chỉnh nằm tại [`docs/COLAB_TRAINING.md`](docs/COLAB_TRAINING.md).
+Repository hiện cung cấp training lifecycle đầy đủ cho việc tạo checkpoint model release trên Google Colab: validation sau mỗi epoch, chọn `best.pt` theo metric cấu hình, `last.pt` để resume, optimizer/scaler state, ontology hash, code commit, manifest và validator checkpoint. Hướng dẫn chạy hoàn chỉnh nằm tại [`docs/COLAB_TRAINING.md`](docs/COLAB_TRAINING.md). Notebook có thể mở trực tiếp trên Colab là [`notebooks/hovr_sg_visual_genome_colab.ipynb`](notebooks/hovr_sg_visual_genome_colab.ipynb) hoặc [Open in Google Colab](https://colab.research.google.com/github/sonbm-itealvn/hovr_sg/blob/main/notebooks/hovr_sg_visual_genome_colab.ipynb).
 
 > `best.pt` là checkpoint chính thức của **một lần training cụ thể** trên dataset/split/ontology/config/seed đã ghi trong manifest. Sửa source không tự tạo ra chất lượng pretrained; cần thực sự chạy training trên dataset đủ lớn và báo cáo validation/test metrics.
 

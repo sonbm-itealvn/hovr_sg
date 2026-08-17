@@ -2,6 +2,8 @@
 
 Tài liệu này mô tả quy trình tạo một checkpoint HOVR-SG có thể phát hành từ dữ liệu scene-graph đã chuẩn hóa. Pipeline không xem `TinyImageEncoder` hoặc pseudo-text embedding là model release; cấu hình release mặc định dùng CLIP ViT-B/32 pretrained, CLIP text prototypes, Hungarian matching, validation và lựa chọn `best.pt` theo metric đã khai báo.
 
+Nếu dùng Visual Genome, có thể mở trực tiếp notebook [`notebooks/hovr_sg_visual_genome_colab.ipynb`](../notebooks/hovr_sg_visual_genome_colab.ipynb) trên Google Colab. Notebook thực hiện cả các bước sinh ontology, convert raw annotations, tạo train/val và novelty splits, training, validate, evaluation và copy artifact về Google Drive.
+
 ## 1. Chuẩn bị runtime Colab
 
 Trong Colab, chọn **GPU runtime** rồi chạy:
@@ -21,7 +23,7 @@ print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_
 
 ## 2. Chuẩn bị dữ liệu
 
-Mỗi dòng JSONL phải tuân theo unified scene-graph schema. `image_path` có thể là đường dẫn tương đối; khi đó truyền thư mục ảnh qua `--image-root`. Cần tạo tối thiểu hai file `train.jsonl` và `val.jsonl`, đồng thời bảo đảm ontology dùng lúc training không thay đổi trong evaluation.
+Mỗi dòng JSONL phải tuân theo unified scene-graph schema. `image_path` có thể là đường dẫn tương đối; khi đó truyền thư mục ảnh qua `--image-root`. Với Visual Genome, dùng `tools/convert_visual_genome.py` rồi `tools/build_splits.py`; tool split sẽ sinh `train.jsonl`, `val.jsonl`, `ss.jsonl`, `ns.jsonl`, `sn.jsonl` và `nn.jsonl`. Mặc định train/val lấy từ pool `ss` để giữ strict zero-shot; dùng `--train-val-source all` chỉ cho pilot không strict.
 
 Ví dụ kiểm tra dataset:
 
