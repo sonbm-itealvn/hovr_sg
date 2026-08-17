@@ -1,0 +1,15 @@
+person
+man
+woman
+boy
+girl
+cup
+bottle
+chair
+sofa
+table
+car
+bus
+truck
+dog
+cat

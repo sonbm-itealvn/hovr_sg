@@ -1,0 +1,48 @@
+seed: 42
+
+model:
+  visual_dim: 256
+  d_model: 256
+  d_latent: 256
+  num_queries: 64
+  top_m_objects: 16
+  top_k_pairs: 64
+
+training:
+  epochs: 10
+  batch_size: 2
+  num_workers: 0
+  lr: 0.0001
+  weight_decay: 0.0001
+  image_size: 256
+  device: auto
+  amp: false
+  save_every: 1
+
+loss:
+  objectness: 1.0
+  leaf: 1.0
+  group: 0.35
+  ancestor: 0.25
+  sibling: 0.25
+  box_l1: 5.0
+  relationness: 1.0
+  predicate: 1.0
+
+stages:
+  detector_warmup_epochs: 2
+  hierarchical_epochs: 2
+  relation_epochs: 3
+  joint_epochs: 3
+
+ontology:
+  path: ontology/ontology_v1.json
+  text_dim: 256
+  trainable_prototypes: false
+
+paths:
+  output_dir: runs/default
+  checkpoint: null
+
+evaluation:
+  top_k_triplets: [20, 50, 100]

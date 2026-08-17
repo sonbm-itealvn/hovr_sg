@@ -1,0 +1,7 @@
+person
+drinkware/container
+seating furniture
+table furniture
+furniture
+ground vehicle
+animal

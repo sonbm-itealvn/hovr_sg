@@ -1,0 +1,11 @@
+holding
+wearing
+touching
+inside
+contains
+on
+under
+left of
+right of
+near
+far

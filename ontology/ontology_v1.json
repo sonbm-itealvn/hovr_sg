@@ -1,0 +1,49 @@
+{
+  "version": "ontology_v1",
+  "object_groups": [
+    {"id": "person", "name": "person", "parents": []},
+    {"id": "drinkware_container", "name": "drinkware/container", "parents": []},
+    {"id": "seating_furniture", "name": "seating furniture", "parents": ["furniture"]},
+    {"id": "table_furniture", "name": "table furniture", "parents": ["furniture"]},
+    {"id": "furniture", "name": "furniture", "parents": []},
+    {"id": "ground_vehicle", "name": "ground vehicle", "parents": []},
+    {"id": "animal", "name": "animal", "parents": []}
+  ],
+  "object_leaves": [
+    {"id": "person", "name": "person", "parents": ["person"], "aliases": ["human", "people"], "siblings": ["dog", "cat"]},
+    {"id": "man", "name": "man", "parents": ["person"], "aliases": ["male", "adult man"], "siblings": ["woman", "boy", "girl"]},
+    {"id": "woman", "name": "woman", "parents": ["person"], "aliases": ["adult woman", "female"], "siblings": ["man", "boy", "girl"]},
+    {"id": "boy", "name": "boy", "parents": ["person"], "aliases": ["male child"], "siblings": ["girl", "man", "woman"]},
+    {"id": "girl", "name": "girl", "parents": ["person"], "aliases": ["female child"], "siblings": ["boy", "man", "woman"]},
+    {"id": "cup", "name": "cup", "parents": ["drinkware_container"], "aliases": ["coffee cup", "mug"], "siblings": ["bottle"]},
+    {"id": "bottle", "name": "bottle", "parents": ["drinkware_container"], "aliases": ["water bottle"], "siblings": ["cup"]},
+    {"id": "chair", "name": "chair", "parents": ["seating_furniture"], "aliases": ["seat"], "siblings": ["table"]},
+    {"id": "sofa", "name": "sofa", "parents": ["seating_furniture"], "aliases": ["couch"], "siblings": ["table"]},
+    {"id": "table", "name": "table", "parents": ["table_furniture"], "aliases": ["desk"], "siblings": ["chair", "sofa"]},
+    {"id": "car", "name": "car", "parents": ["ground_vehicle"], "aliases": ["automobile"], "siblings": ["bus", "truck"]},
+    {"id": "bus", "name": "bus", "parents": ["ground_vehicle"], "aliases": [], "siblings": ["car", "truck"]},
+    {"id": "truck", "name": "truck", "parents": ["ground_vehicle"], "aliases": [], "siblings": ["car", "bus"]},
+    {"id": "dog", "name": "dog", "parents": ["animal"], "aliases": [], "siblings": ["cat", "person"]},
+    {"id": "cat", "name": "cat", "parents": ["animal"], "aliases": [], "siblings": ["dog", "person"]}
+  ],
+  "predicate_groups": [
+    {"id": "contact_action", "name": "contact action", "parents": []},
+    {"id": "containment", "name": "containment", "parents": []},
+    {"id": "vertical_spatial", "name": "vertical spatial", "parents": []},
+    {"id": "directional", "name": "directional", "parents": []},
+    {"id": "topological", "name": "topological", "parents": []}
+  ],
+  "predicates": [
+    {"id": "holding", "name": "holding", "parents": ["contact_action"], "aliases": ["grasping", "carrying in hand"], "symmetric": false},
+    {"id": "wearing", "name": "wearing", "parents": ["contact_action"], "aliases": [], "symmetric": false},
+    {"id": "touching", "name": "touching", "parents": ["contact_action"], "aliases": ["touch"] , "symmetric": true},
+    {"id": "inside", "name": "inside", "parents": ["containment"], "aliases": ["in"], "symmetric": false},
+    {"id": "contains", "name": "contains", "parents": ["containment"], "aliases": [], "symmetric": false},
+    {"id": "on", "name": "on", "parents": ["vertical_spatial"], "aliases": ["on top of"], "symmetric": false},
+    {"id": "under", "name": "under", "parents": ["vertical_spatial"], "aliases": ["below"], "symmetric": false},
+    {"id": "left_of", "name": "left of", "parents": ["directional"], "aliases": ["to the left of"], "symmetric": false},
+    {"id": "right_of", "name": "right of", "parents": ["directional"], "aliases": ["to the right of"], "symmetric": false},
+    {"id": "near", "name": "near", "parents": ["topological"], "aliases": ["close to"], "symmetric": true},
+    {"id": "far", "name": "far", "parents": ["topological"], "aliases": ["far from"], "symmetric": true}
+  ]
+}

@@ -1,0 +1,19 @@
+visual_genome:
+  images_root: /data/visual_genome/VG_100K
+  image_data: /data/visual_genome/image_data.json
+  objects: /data/visual_genome/objects.json
+  relationships: /data/visual_genome/relationships.json
+  output: data/vg_unified.jsonl
+
+open_images:
+  images_root: /data/open_images/train
+  boxes_csv: /data/open_images/oidv6-train-annotations-bbox.csv
+  relations_csv: /data/open_images/oidv6-train-annotations-vrd.csv
+  class_descriptions: /data/open_images/class-descriptions-boxable.csv
+  output: data/oi_train_unified.jsonl
+  annotation_scope: exhaustive
+
+gqa:
+  images_root: /data/gqa/images
+  scene_graphs: /data/gqa/train_sceneGraphs.json
+  output: data/gqa_train_unified.jsonl
