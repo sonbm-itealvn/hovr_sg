@@ -293,6 +293,24 @@ Repository hiện cung cấp training lifecycle đầy đủ cho việc tạo ch
 
 > `best.pt` là checkpoint chính thức của **một lần training cụ thể** trên dataset/split/ontology/config/seed đã ghi trong manifest. Sửa source không tự tạo ra chất lượng pretrained; cần thực sự chạy training trên dataset đủ lớn và báo cáo validation/test metrics.
 
+Để train tiếp từ `last.pt`, không cần sửa `training.epochs` trong YAML. Dùng `--additional-epochs N`; CLI sẽ tự cộng vào epoch trong checkpoint, mở rộng stage cuối và khôi phục lịch sử. Có thể dùng `--lr` để override learning rate sau resume:
+
+```bash
+python scripts/train.py \
+  --config configs/hovr_sg.yaml \
+  --train-jsonl data/splits/train.jsonl \
+  --val-jsonl data/splits/val.jsonl \
+  --ontology ontology/ontology_vg_v1.json \
+  --image-root /data/images \
+  --output-dir runs/hovr_v1 \
+  --resume runs/hovr_v1/last.pt \
+  --additional-epochs 10 \
+  --lr 1e-5 \
+  --device cuda
+```
+
+Không truyền đồng thời `--epochs` và `--additional-epochs`.
+
 Các protocol chuyên biệt như base/novel split, zero-shot triplet recall đầy đủ, calibration, harmonic mean và evaluator dataset-specific vẫn cần cấu hình theo benchmark thực tế. Converter và unified schema được giữ lại để giảm phần công việc thay đổi dữ liệu.
 
 ## References

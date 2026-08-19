@@ -199,7 +199,10 @@ def compute_loss(out, targets, matches, prototypes: PrototypeBank, ontology: Ont
     return terms
 
 
-def build_stage_schedule(cfg: dict, total_epochs: int, override: int | None = None):
+def build_stage_schedule(
+    cfg: dict, total_epochs: int, override: int | None = None,
+    extend_last_stage: bool = False,
+):
     configured = [
         ("detector_warmup", int(cfg.get("stages", {}).get("detector_warmup_epochs", 0))),
         ("hierarchical", int(cfg.get("stages", {}).get("hierarchical_epochs", 0))),
@@ -222,7 +225,12 @@ def build_stage_schedule(cfg: dict, total_epochs: int, override: int | None = No
     schedule = [(name, count) for name, count in configured if count > 0]
     scheduled_epochs = sum(count for _, count in schedule)
     if scheduled_epochs != total_epochs:
-        schedule.append(("joint", max(0, total_epochs - scheduled_epochs)))
+        remaining = max(0, total_epochs - scheduled_epochs)
+        if remaining and extend_last_stage and schedule:
+            name, count = schedule[-1]
+            schedule[-1] = (name, count + remaining)
+        elif remaining:
+            schedule.append(("joint", remaining))
     return [(name, count) for name, count in schedule if count > 0]
 
 
@@ -287,6 +295,7 @@ def build_checkpoint(
     epoch: int, stage: str, stage_schedule, amp_enabled: bool,
     encoder, model, prototypes, optimizer, scaler, cfg: dict,
     ontology: Ontology, ontology_path: str, best_score: float, val_metrics: dict,
+    best_metrics: dict | None = None, history: list | None = None,
 ):
     model_cfg = cfg.get("model", {})
     return {
@@ -307,7 +316,9 @@ def build_checkpoint(
         "config": cfg,
         "git_commit": git_commit(),
         "best_score": float(best_score),
+        "best_metrics": dict(best_metrics or {}),
         "val_metrics": dict(val_metrics),
+        "history": list(history or []),
         "resolved": {
             "visual_dim": int(model_cfg["visual_dim"]),
             "text_dim": int(model_cfg["d_latent"]),
@@ -328,13 +339,24 @@ def main() -> None:
     parser.add_argument("--ontology", required=True)
     parser.add_argument("--image-root", default=None)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Absolute total epoch target; use --additional-epochs for resume-friendly continuation")
+    parser.add_argument("--additional-epochs", type=int, default=None,
+                        help="Number of epochs to add to the resume checkpoint epoch")
+    parser.add_argument("--lr", type=float, default=None,
+                        help="Override optimizer learning rate, including after resume")
     parser.add_argument("--device", default=None)
     parser.add_argument("--backbone", default=None, choices=["clip", "pretrained_vlm", "tiny_cnn"])
     parser.add_argument("--backbone-name", default=None)
     parser.add_argument("--train-backbone", action="store_true")
     parser.add_argument("--resume", default=None, help="Resume from a last.pt/checkpoint path")
     args = parser.parse_args()
+    if args.epochs is not None and args.additional_epochs is not None:
+        raise ValueError("Use either --epochs or --additional-epochs, not both")
+    if args.additional_epochs is not None and args.additional_epochs <= 0:
+        raise ValueError("--additional-epochs must be positive")
+    if args.lr is not None and args.lr <= 0:
+        raise ValueError("--lr must be positive")
     cfg = load_yaml(args.config)
     cfg = copy.deepcopy(cfg)
     model_cfg = cfg.setdefault("model", {})
@@ -393,17 +415,6 @@ def main() -> None:
         cost_bbox=float(matcher_cfg.get("cost_bbox", 5.0)),
         cost_objectness=float(matcher_cfg.get("cost_objectness", 1.0)),
     )
-    epochs = args.epochs or int(cfg.get("training", {}).get("epochs", 10))
-    stage_schedule = build_stage_schedule(cfg, epochs, args.epochs)
-    amp_requested = bool(cfg.get("training", {}).get("amp", False))
-    amp_enabled = amp_requested and device.type == "cuda"
-    try:
-        scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
-    except (AttributeError, TypeError):  # PyTorch < 2.4 compatibility
-        scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
-    out_dir = Path(args.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     resume_state = None
     if args.resume:
         resume_state = torch.load(args.resume, map_location="cpu", weights_only=False)
@@ -415,9 +426,37 @@ def main() -> None:
             prototypes.load_state_dict(resume_state["prototypes"], strict=False)
 
     resume_epoch = int(resume_state.get("epoch", 0)) if resume_state else 0
+    if args.additional_epochs is not None:
+        if not args.resume:
+            raise ValueError("--additional-epochs requires --resume")
+        epochs = resume_epoch + int(args.additional_epochs)
+        schedule_override = None
+    else:
+        epochs = args.epochs or int(cfg.get("training", {}).get("epochs", 10))
+        schedule_override = args.epochs
+    if epochs <= 0:
+        raise ValueError("The total number of epochs must be positive")
+    cfg.setdefault("training", {})["epochs"] = epochs
+    if args.lr is not None:
+        cfg.setdefault("training", {})["lr"] = float(args.lr)
+    stage_schedule = build_stage_schedule(
+        cfg, epochs, schedule_override,
+        extend_last_stage=args.additional_epochs is not None,
+    )
+    amp_requested = bool(cfg.get("training", {}).get("amp", False))
+    amp_enabled = amp_requested and device.type == "cuda"
+    try:
+        scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
+    except (AttributeError, TypeError):  # PyTorch < 2.4 compatibility
+        scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     best_score = float(resume_state.get("best_score", float("-inf"))) if resume_state else float("-inf")
-    best_metrics = dict(resume_state.get("val_metrics", {})) if resume_state else {}
-    history = []
+    best_metrics = dict(
+        resume_state.get("best_metrics", resume_state.get("val_metrics", {}))
+    ) if resume_state else {}
+    history = list(resume_state.get("history", [])) if resume_state else []
     completed_before = 0
     selection_metric = str(cfg.get("validation", {}).get("selection_metric", "object_mAP50_95"))
     val_frequency = max(1, int(cfg.get("validation", {}).get("frequency", 1)))
@@ -442,6 +481,9 @@ def main() -> None:
             optimizer.load_state_dict(resume_state["optimizer"])
             if scaler.is_enabled() and resume_state.get("scaler"):
                 scaler.load_state_dict(resume_state["scaler"])
+        if args.lr is not None:
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = float(args.lr)
         active_weights = stage_loss_weights(stage_name, weights)
         local_start = max(0, resume_epoch - stage_start)
         for local_epoch in range(local_start, stage_epochs):
@@ -495,10 +537,16 @@ def main() -> None:
             if score > best_score:
                 best_score = score
                 best_metrics = dict(val_metrics)
+            history.append({
+                "epoch": current_epoch, "stage": stage_name,
+                "train_loss": running / max(len(loader), 1),
+                "validation": val_metrics, "selection_score": score,
+            })
             checkpoint = build_checkpoint(
                 current_epoch, stage_name, stage_schedule, amp_enabled,
                 encoder, model, prototypes, optimizer, scaler, cfg,
                 ontology, args.ontology, best_score, val_metrics,
+                best_metrics=best_metrics, history=history,
             )
             torch.save(checkpoint, out_dir / "last.pt")
             if score >= best_score and (val_loader is not None or current_epoch == epochs):
@@ -516,12 +564,6 @@ def main() -> None:
                         "ontology_sha256": checkpoint["ontology_sha256"],
                     }, indent=2), encoding="utf-8",
                 )
-            history.append({
-                "epoch": current_epoch, "stage": stage_name,
-                "train_loss": running / max(len(loader), 1),
-                "validation": val_metrics, "selection_score": score,
-            })
-
     if not (out_dir / "best.pt").exists() and (out_dir / "last.pt").exists():
         torch.save(torch.load(out_dir / "last.pt", map_location="cpu", weights_only=False), out_dir / "best.pt")
     (out_dir / "training_summary.json").write_text(

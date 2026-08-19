@@ -118,7 +118,25 @@ Colab nên lưu output vào Google Drive hoặc tải `last.pt` lên storage b�
   --device cuda
 ```
 
-Checkpoint resume khôi phục model state, prototypes, optimizer, AMP scaler, epoch/stage progress và best score. Không đổi ontology hoặc `model.backbone_name` giữa các lần resume.
+Checkpoint resume khôi phục model state, prototypes, optimizer, AMP scaler, epoch/stage progress, lịch sử validation và best score. Không đổi ontology hoặc `model.backbone_name` giữa các lần resume.
+
+Để chạy tiếp mà không sửa `training.epochs` trong YAML, dùng `--additional-epochs`. Ví dụ checkpoint đang ở epoch 10 và muốn chạy thêm 10 epoch:
+
+```bash
+!python scripts/train.py \
+  --config configs/hovr_sg.yaml \
+  --train-jsonl /content/data/train.jsonl \
+  --val-jsonl /content/data/val.jsonl \
+  --ontology ontology/ontology_vg_v1.json \
+  --image-root /content/data/images \
+  --output-dir /content/runs/hovr_sg_release \
+  --resume /content/runs/hovr_sg_release/last.pt \
+  --additional-epochs 10 \
+  --lr 1e-5 \
+  --device cuda
+```
+
+CLI sẽ tự tính tổng epoch mới, mở rộng stage cuối, khôi phục lịch sử cũ và áp dụng learning rate override cho optimizer. Không truyền đồng thời `--epochs` và `--additional-epochs`.
 
 ## 5. Kiểm tra checkpoint trước khi phát hành
 

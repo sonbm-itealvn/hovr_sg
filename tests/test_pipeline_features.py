@@ -43,3 +43,16 @@ def test_stage_schedule_uses_all_configured_stages():
     assert build_stage_schedule(config, 4) == [
         ("detector_warmup", 1), ("hierarchical", 1), ("relation", 1), ("joint", 1)
     ]
+
+
+def test_stage_schedule_can_extend_last_stage_for_resume():
+    config = {"stages": {
+        "detector_warmup_epochs": 2,
+        "hierarchical_epochs": 2,
+        "relation_epochs": 3,
+        "joint_epochs": 3,
+    }}
+    assert build_stage_schedule(config, 20, extend_last_stage=True) == [
+        ("detector_warmup", 2), ("hierarchical", 2),
+        ("relation", 3), ("joint", 13),
+    ]
