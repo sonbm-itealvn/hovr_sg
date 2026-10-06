@@ -75,7 +75,8 @@ class SparseRelationDecoder(nn.Module):
         iou = inter / (ws * hs + wo * ho - inter + 1e-6)
         return torch.stack([
             (co[..., 0] - cs[..., 0]) / ws, (co[..., 1] - cs[..., 1]) / hs,
-            torch.log(wo / ws), torch.log(ho / hs), torch.log(ws * hs), torch.log(wo * ho),
+            torch.log(wo) - torch.log(ws), torch.log(ho) - torch.log(hs),
+            torch.log(ws) + torch.log(hs), torch.log(wo) + torch.log(ho),
             iou, (co[..., 0] - cs[..., 0]) / wo, (co[..., 1] - cs[..., 1]) / ho,
         ], dim=-1)
 
