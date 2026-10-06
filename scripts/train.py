@@ -13,9 +13,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from hovr_sg.data import UnifiedSceneGraphDataset, collate_scene_graph
+from hovr_sg.data.samplers import RepeatFactorSampler
 from hovr_sg.evaluation.predict import predict_dataset
 from hovr_sg.losses import HungarianMatcher
-from hovr_sg.losses.hovr_losses import ancestor_consistency
+from hovr_sg.losses.hovr_losses import ancestor_consistency, UncertaintyWeighting
 from hovr_sg.models import (
     CLIPTextPrototypeEncoder,
     HOVRSG,
@@ -415,6 +416,10 @@ def main() -> None:
         cost_bbox=float(matcher_cfg.get("cost_bbox", 5.0)),
         cost_objectness=float(matcher_cfg.get("cost_objectness", 1.0)),
     )
+    uncertainty_weighter = None
+    if bool(cfg.get("loss", {}).get("uncertainty_weighting", False)):
+        loss_names = ["objectness", "leaf", "group", "ancestor", "sibling", "box_l1", "relationness", "predicate"]
+        uncertainty_weighter = UncertaintyWeighting(loss_names).to(device)
     resume_state = None
     if args.resume:
         resume_state = torch.load(args.resume, map_location="cpu", weights_only=False)
@@ -468,10 +473,23 @@ def main() -> None:
         if resume_epoch >= stage_end:
             continue
         configure_stage(stage_name, encoder, model, model_cfg)
+        # Risk 4 fix: use Repeat Factor Sampling for relation/joint stages
+        rfs_threshold = float(cfg.get("loss", {}).get("repeat_factor_threshold", 0.0))
+        if stage_name in {"relation", "joint"} and rfs_threshold > 0:
+            sampler = RepeatFactorSampler(train_ds, repeat_threshold=rfs_threshold, seed=int(cfg.get("seed", 42)))
+            loader = DataLoader(
+                train_ds,
+                batch_size=int(cfg.get("training", {}).get("batch_size", 2)),
+                sampler=sampler,
+                num_workers=int(cfg.get("training", {}).get("num_workers", 0)),
+                collate_fn=collate_scene_graph,
+            )
         trainable_params = [
             parameter for module in (encoder, model, prototypes)
             for parameter in module.parameters() if parameter.requires_grad
         ]
+        if uncertainty_weighter is not None:
+            trainable_params += list(uncertainty_weighter.parameters())
         optimizer = torch.optim.AdamW(
             trainable_params,
             lr=float(cfg.get("training", {}).get("lr", 1e-4)),
@@ -492,6 +510,8 @@ def main() -> None:
             model.train()
             prototypes.train()
             running = 0.0
+            if hasattr(loader, 'sampler') and hasattr(loader.sampler, 'set_epoch'):
+                loader.sampler.set_epoch(current_epoch)
             progress = tqdm(loader, desc=f"{stage_name} {current_epoch}/{epochs}")
             for batch in progress:
                 images = batch["images"].to(device)
@@ -510,6 +530,8 @@ def main() -> None:
                     )
                     matches = matcher(out, batch["samples"])
                     terms = compute_loss(out, targets, matches, prototypes, ontology, active_weights)
+                    if uncertainty_weighter is not None:
+                        terms["total"] = uncertainty_weighter(terms, active_weights)
                 if scaler.is_enabled():
                     scaler.scale(terms["total"]).backward()
                     scaler.unscale_(optimizer)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Sequence
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 import torch.nn.functional as F
 
 
@@ -85,6 +85,49 @@ def relation_prototype_loss(
     if not valid.any():
         return z_rel.sum() * 0.0
     return prototype_contrastive(z_rel[valid], relation_prototypes, targets[valid])
+
+
+class UncertaintyWeighting(nn.Module):
+    """Multi-task loss balancing via learned homoscedastic uncertainty.
+
+    Implements the approach of Kendall, Gal & Cipolla (CVPR 2018).
+    Each loss term *k* has a learnable log-variance ``log_sigma_k``;
+    the effective weight becomes ``1 / (2 * sigma_k^2)`` with an
+    additive ``log(sigma_k)`` regulariser that prevents all variances
+    from growing unboundedly.
+
+    When this module is disabled (not instantiated), the training
+    script falls back to the fixed-weight scheme.
+    """
+
+    def __init__(self, loss_names: Sequence[str]):
+        super().__init__()
+        # Initialise log(sigma^2) = 0 → sigma = 1 → weight = 0.5
+        self.log_vars = nn.ParameterDict({
+            name: nn.Parameter(torch.zeros(1)) for name in loss_names
+        })
+
+    def forward(
+        self,
+        losses: Dict[str, Tensor],
+        fixed_weights: Dict[str, float],
+    ) -> Tensor:
+        """Compute uncertainty-weighted total loss.
+
+        Fixed weights are still multiplied so that the user's relative
+        priorities are respected, but the magnitude is auto-balanced.
+        """
+        total = losses[next(iter(losses))].sum() * 0.0  # zero on correct device
+        for name, loss_val in losses.items():
+            if name == "total":
+                continue
+            log_var = self.log_vars.get(name)
+            if log_var is None:
+                total = total + fixed_weights.get(name, 1.0) * loss_val
+                continue
+            precision = torch.exp(-log_var[0])  # 1 / sigma^2
+            total = total + fixed_weights.get(name, 1.0) * (0.5 * precision * loss_val + 0.5 * log_var[0])
+        return total
 
 
 def build_loss(

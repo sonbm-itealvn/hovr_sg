@@ -186,7 +186,7 @@ h_{ij}=\mathrm{MLP}([
  c_{ij}]).
 \]
 
-Trong đó `u_ij` là union-region feature lấy từ feature map của vùng bao phủ hai box; `φ` là positional encoding của hình học tương đối; `c_ij` là context feature do một vài layer cross-attention giữa query subject/object và image tokens tạo ra.
+Trong đó `u_ij` là union-region feature lấy từ feature map của vùng bao phủ hai box (sử dụng RoIAlign để tăng tốc độ và tránh lỗi tràn VRAM ở ảnh độ phân giải cao); `φ` là positional encoding của hình học tương đối; `c_ij` là context feature do một vài layer cross-attention giữa query subject/object và image tokens tạo ra.
 
 Relationness head dự đoán:
 
@@ -473,7 +473,7 @@ Mở group loss, leaf contrastive loss, ancestor consistency và sibling hard-ne
 
 ### Giai đoạn 3: Relation decoder
 
-Freeze detector trong vài epoch đầu, train relation proposal và relation decoder trên các object matching chính xác. Dùng ground-truth pair boxes hoặc matched predicted slots có teacher forcing ở giai đoạn đầu, sau đó chuyển dần sang predicted boxes để tránh train–test mismatch.
+Freeze detector trong vài epoch đầu, train relation proposal và relation decoder trên các object matching chính xác. Ở giai đoạn này, bắt buộc dùng **Repeat Factor Sampling** (LVIS) để oversample các biểu diễn relation hiếm gặp (dữ liệu dạng long-tail), giúp tránh tình trạng mô hình bias hoàn toàn về predicate "on" hay "holding". Dùng ground-truth pair boxes hoặc matched predicted slots có teacher forcing ở giai đoạn đầu, sau đó chuyển dần sang predicted boxes để tránh train–test mismatch.
 
 ### Giai đoạn 4: Joint end-to-end fine-tuning
 

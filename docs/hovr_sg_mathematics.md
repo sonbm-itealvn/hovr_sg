@@ -249,9 +249,9 @@ $$\boxed{\ell_{ic}^{\text{leaf}} = \frac{z_i^{\text{leaf}} \cdot t_c^{\text{leaf
 
 Group classification logits (multi-label sigmoid):
 
-$$\boxed{\ell_{ig}^{\text{group}} = \frac{z_i^{\text{group}} \cdot t_g^{\text{group}}}{\tau_{\text{group}}}}, \qquad \tau_{\text{group}} = \exp(\log \tau_{\text{group}}) \geq 10^{-4}$$
+$$\boxed{\ell_{ig}^{\text{group}} = \frac{z_i^{\text{group}} \cdot t_g^{\text{group}}}{\tau_{\text{group}}}}, \qquad \tau_{\text{group}} = \exp(\log \tau_{\text{group}}) \in [0.01, 0.10]$$
 
-**Temperature parameters** $\log \tau_{\text{leaf}}, \log \tau_{\text{group}}$ được khởi tạo tại $\log(0.07) \approx -2.659$ và **learnable**.
+**Temperature parameters** $\log \tau_{\text{leaf}}, \log \tau_{\text{group}}$ được khởi tạo tại $\log(0.07) \approx -2.659$ và **learnable**. Việc giới hạn $\tau \in [0.01, 0.10]$ ngăn ngừa tình trạng gradient bùng nổ khi $\tau \to 0$.
 
 ### 5.4. Diagram Latent Space
 
@@ -321,19 +321,16 @@ $$\boxed{\phi(s, o) = \begin{pmatrix} \frac{c_o^x - c_s^x}{w_s} \\ \frac{c_o^y -
 
 ### 6.4. Union-Region Features — Spatial Pooling
 
-Xây dựng lưới tọa độ trung tâm cho các patch tokens:
+Union box được tạo từ bounding box chuẩn hoá của Subject và Object:
 
-$$\text{grid}_x(n) = \frac{n \bmod W_{\text{grid}} + 0.5}{W_{\text{grid}}}, \qquad \text{grid}_y(n) = \frac{\lfloor n / W_{\text{grid}} \rfloor + 0.5}{H_{\text{grid}}}$$
-
-Union box:
 $$b_{\text{union}}^{so} = \Big(\min(x_1^s, x_1^o),\; \min(y_1^s, y_1^o),\; \max(x_2^s, x_2^o),\; \max(y_2^s, y_2^o)\Big)$$
 
-Membership mask (nào patch nằm trong union box):
-$$\text{inside}(n, s, o) = \mathbb{1}\!\Big[\text{grid}_x(n) \in [x_1^{\text{union}}, x_2^{\text{union}}] \;\wedge\; \text{grid}_y(n) \in [y_1^{\text{union}}, y_2^{\text{union}}]\Big]$$
+Để tối ưu bộ nhớ GPU khi xử lý ảnh phân giải cao, quá trình trích xuất đặc trưng sử dụng **RoIAlign** (từ thư viện `torchvision.ops`):
+1. Chuyển đổi $S$ patch tokens (1D sequence) trở lại feature map 2D có hình dạng $H \times W$.
+2. Áp dụng RoIAlign trên $b_{\text{union}}^{so}$ với output size $7 \times 7$.
+3. Average pooling qua không gian $7 \times 7$ để thu được một vector $u_{so}$ duy nhất.
 
-Union-region feature (average pooling):
-
-$$\boxed{u_{so} = \frac{\sum_{n=1}^{S} \text{inside}(n, s, o) \cdot \text{memory}_n}{\max\!\big(\sum_{n=1}^{S} \text{inside}(n, s, o),\; 1\big)} \;\in\; \mathbb{R}^{D_{\text{model}}}}$$
+$$\boxed{u_{so} = \text{AvgPool}_{7 \times 7}\big( \text{RoIAlign}(\text{memory}, b_{\text{union}}^{so}) \big) \;\in\; \mathbb{R}^{D_{\text{model}}}}$$
 
 ### 6.5. Pair Feature Construction
 
@@ -410,6 +407,9 @@ flowchart TB
 
 $$\boxed{\mathcal{L}_{\text{total}} = \sum_{k} \lambda_k \cdot \mathcal{L}_k}$$
 
+*Lưu ý:* Nếu sử dụng `uncertainty_weighting: true` trong cấu hình, mô hình sẽ học hệ số cân bằng đa nhiệm theo Kendall et al.:
+$$\mathcal{L}_{\text{total}} = \sum_{k} \lambda_k \Big( \frac{1}{2\sigma_k^2}\mathcal{L}_k + \log \sigma_k \Big)$$
+
 | # | $\mathcal{L}_k$ | $\lambda_k$ (mặc định) | Loại | Mục tiêu |
 |---|---|---|---|---|
 | 1 | Objectness | 1.0 | Sigmoid Focal | Background vs foreground |
@@ -445,7 +445,7 @@ Dùng cho: leaf classification, predicate classification.
 
 $$\boxed{\mathcal{L}_{\text{contrast}}(z, T, y) = -\frac{1}{N}\sum_i \log \frac{\exp\!\big(\langle \bar{z}_i, \bar{t}_{y_i}\rangle / \tau\big)}{\sum_{c=1}^{C} \exp\!\big(\langle \bar{z}_i, \bar{t}_c\rangle / \tau\big)}}$$
 
-trong đó $\bar{z} = z / \|z\|_2$, $\bar{t} = t / \|t\|_2$, $\tau = 0.07$ (default).
+trong đó $\bar{z} = z / \|z\|_2$, $\bar{t} = t / \|t\|_2$, $\tau \in [0.01, 0.10]$ với giá trị khởi tạo là $0.07$.
 
 Đây chính là **cross-entropy trên cosine similarity** — tương đương InfoNCE loss khi $\tau$ nhỏ.
 

@@ -6,6 +6,7 @@ from typing import Dict, Optional
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
+from torchvision.ops import roi_align
 
 
 class MLP(nn.Module):
@@ -42,8 +43,8 @@ class HierarchicalPrototypeHead(nn.Module):
         return {
             "z_leaf": z_leaf,
             "z_group": z_group,
-            "leaf_logits": leaf_logits / self.log_tau_leaf.exp().clamp_min(1e-4),
-            "group_logits": group_logits / self.log_tau_group.exp().clamp_min(1e-4),
+            "leaf_logits": leaf_logits / self.log_tau_leaf.exp().clamp(min=0.01, max=0.10),
+            "group_logits": group_logits / self.log_tau_group.exp().clamp(min=0.01, max=0.10),
         }
 
 
@@ -80,33 +81,60 @@ class SparseRelationDecoder(nn.Module):
 
     @staticmethod
     def union_region_features(visual_memory: Tensor, boxes: Tensor, s: Tensor, o: Tensor) -> Tensor:
-        """Pool projected patch tokens whose centers fall inside each union box."""
+        """Pool projected patch tokens inside each union box using RoIAlign.
+
+        Previously used a soft membership mask of shape (B, pairs, S) which
+        consumed O(B × pairs × S × D) memory — a VRAM bottleneck on high-res
+        inputs.  RoIAlign uses a dedicated CUDA kernel with O(B × pairs × 7² × D)
+        memory, independent of the spatial resolution S.
+        """
         bsz, num_tokens, dim = visual_memory.shape
         side = int(num_tokens ** 0.5)
         if side * side != num_tokens:
             height, width = 1, num_tokens
         else:
             height = width = side
-        ys = (torch.arange(height, device=boxes.device, dtype=boxes.dtype) + 0.5) / height
-        xs = (torch.arange(width, device=boxes.device, dtype=boxes.dtype) + 0.5) / width
-        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
-        centers = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1)
-        pair_boxes = boxes[:, s]
-        other_boxes = boxes[:, o]
+
+        # Reshape flat patch tokens into a 2-D feature map for roi_align
+        feature_map = visual_memory.permute(0, 2, 1).reshape(bsz, dim, height, width)
+
+        # Compute union boxes from subject and object boxes
+        pair_boxes = boxes[:, s]   # (B, num_pairs, 4)
+        other_boxes = boxes[:, o]  # (B, num_pairs, 4)
         union = torch.stack([
             torch.minimum(pair_boxes[..., 0], other_boxes[..., 0]),
             torch.minimum(pair_boxes[..., 1], other_boxes[..., 1]),
             torch.maximum(pair_boxes[..., 2], other_boxes[..., 2]),
             torch.maximum(pair_boxes[..., 3], other_boxes[..., 3]),
-        ], dim=-1)
-        inside = (
-            (centers[None, None, :, 0] >= union[..., None, 0])
-            & (centers[None, None, :, 0] <= union[..., None, 2])
-            & (centers[None, None, :, 1] >= union[..., None, 1])
-            & (centers[None, None, :, 1] <= union[..., None, 3])
-        ).to(visual_memory.dtype)
-        pooled = torch.einsum("bpn,bnd->bpd", inside, visual_memory)
-        return pooled / inside.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        ], dim=-1)  # (B, num_pairs, 4) in [0,1] normalised coords
+
+        # roi_align expects absolute pixel coords: scale from [0,1] to [0, H/W]
+        # and pack as list-of-(num_pairs, 5) with batch index column
+        roi_list = []
+        for b in range(bsz):
+            rois_b = union[b]  # (num_pairs, 4) normalised
+            # Convert normalised [x1,y1,x2,y2] to pixel coords on the feature map
+            rois_pixel = rois_b.clone()
+            rois_pixel[:, 0] *= width
+            rois_pixel[:, 2] *= width
+            rois_pixel[:, 1] *= height
+            rois_pixel[:, 3] *= height
+            # Prepend batch index
+            batch_idx = rois_pixel.new_full((rois_pixel.shape[0], 1), b)
+            roi_list.append(torch.cat([batch_idx, rois_pixel], dim=-1))
+
+        rois = torch.cat(roi_list, dim=0)  # (B * num_pairs, 5)
+        num_pairs = union.shape[1]
+
+        # RoIAlign: output_size=7 matches Faster R-CNN convention; avg-pooled below
+        aligned = roi_align(
+            feature_map, rois, output_size=7,
+            spatial_scale=1.0, aligned=True,
+        )  # (B * num_pairs, dim, 7, 7)
+
+        # Average pool the 7×7 grid to get a single vector per union region
+        pooled = aligned.mean(dim=(2, 3))  # (B * num_pairs, dim)
+        return pooled.reshape(bsz, num_pairs, dim)
 
     def forward(
         self, slots: Tensor, boxes: Tensor, object_scores: Tensor,
@@ -153,7 +181,7 @@ class SparseRelationDecoder(nn.Module):
         }
         if relation_text is not None:
             relation_text = F.normalize(relation_text, dim=-1)
-            output["relation_logits"] = torch.einsum("bkd,rd->bkr", z_rel, relation_text) / self.log_tau_rel.exp().clamp_min(1e-4)
+            output["relation_logits"] = torch.einsum("bkd,rd->bkr", z_rel, relation_text) / self.log_tau_rel.exp().clamp(min=0.01, max=0.10)
         return output
 
 

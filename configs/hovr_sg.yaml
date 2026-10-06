@@ -50,6 +50,7 @@ loss:
   box_l1: 5.0
   relationness: 1.0
   predicate: 1.0
+  uncertainty_weighting: false
 
 stages:
   detector_warmup_epochs: 2
