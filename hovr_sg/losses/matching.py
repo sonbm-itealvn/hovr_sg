@@ -39,8 +39,8 @@ class HungarianMatcher:
                 "`pip install -e .`."
             ) from exc
 
-        probabilities = outputs.leaf_logits.softmax(-1)
-        objectness = outputs.objectness_logits.sigmoid()
+        probabilities = outputs.leaf_logits.float().softmax(-1)
+        objectness = outputs.objectness_logits.float().sigmoid()
         matches: List[Tuple[Tensor, Tensor]] = []
         for batch_index, sample in enumerate(samples):
             max_targets = outputs.boxes.shape[1]
@@ -51,7 +51,7 @@ class HungarianMatcher:
                 matches.append((empty, empty))
                 continue
             class_cost = -probabilities[batch_index][:, target_labels]
-            bbox_cost = torch.cdist(outputs.boxes[batch_index], target_boxes, p=1)
+            bbox_cost = torch.cdist(outputs.boxes[batch_index].float(), target_boxes, p=1)
             objectness_cost = -objectness[batch_index][:, None].expand(-1, target_labels.numel())
             cost = (
                 self.cost_class * class_cost
