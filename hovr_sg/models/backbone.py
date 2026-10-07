@@ -83,12 +83,12 @@ class PretrainedCLIPVisionEncoder(nn.Module):
         for parameter in self.model.parameters():
             parameter.requires_grad = bool(trainable)
         if not trainable and unfreeze_last_n_layers > 0:
-            layers = self.model.vision_model.encoder.layers
+            layers = getattr(self.model, "vision_model", self.model).encoder.layers
             count = min(int(unfreeze_last_n_layers), len(layers))
             for layer in layers[-count:]:
                 for parameter in layer.parameters():
                     parameter.requires_grad = True
-            for parameter in self.model.vision_model.post_layernorm.parameters():
+            for parameter in getattr(self.model, "vision_model", self.model).post_layernorm.parameters():
                 parameter.requires_grad = True
 
     @property
@@ -110,7 +110,10 @@ class PretrainedCLIPVisionEncoder(nn.Module):
             pixel_values=images,
             interpolate_pos_encoding=images.shape[-2:] != (self.image_size, self.image_size),
         )
-        patch_tokens = self.model.vision_model.post_layernorm(outputs.last_hidden_state[:, 1:, :])
+        vision_core = getattr(self.model, "vision_model", self.model)
+        patch_tokens = outputs.last_hidden_state[:, 1:, :]
+        if hasattr(vision_core, "post_layernorm"):
+            patch_tokens = vision_core.post_layernorm(patch_tokens)
         if patch_tokens.shape[1] == 0:
             raise RuntimeError("CLIP vision backbone returned no spatial patch tokens")
         return patch_tokens
