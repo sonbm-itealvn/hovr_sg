@@ -521,8 +521,9 @@ def main() -> None:
                 )
                 targets["raw_samples"] = batch["samples"]
                 optimizer.zero_grad(set_to_none=True)
-                with torch.autocast(device_type=device.type, enabled=amp_enabled):
+                with torch.set_grad_enabled(model_cfg.get("train_backbone", False)):
                     visual = encoder(images)
+                with torch.autocast(device_type=device.type, enabled=amp_enabled):
                     out = model(
                         visual, prototypes.leaf, prototypes.groups, prototypes.relations,
                         top_m=int(model_cfg.get("top_m_objects", 16)),

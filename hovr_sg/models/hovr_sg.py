@@ -56,7 +56,7 @@ class SparseRelationDecoder(nn.Module):
             d_model=hidden, nhead=8, dim_feedforward=4 * hidden,
             batch_first=True, norm_first=True,
         )
-        self.context = nn.TransformerEncoder(layer, num_layers=2)
+        self.context = nn.TransformerEncoder(layer, num_layers=2, norm=nn.LayerNorm(hidden))
         self.relationness = nn.Linear(hidden, 1)
         self.rel_proj = nn.Linear(hidden, d_latent)
         self.log_tau_rel = nn.Parameter(torch.log(torch.tensor(0.07)))
@@ -212,7 +212,7 @@ class HOVRSG(nn.Module):
             d_model=self.d_model, nhead=8, dim_feedforward=4 * self.d_model,
             batch_first=True, norm_first=True,
         )
-        self.query_decoder = nn.TransformerDecoder(layer, num_layers=6)
+        self.query_decoder = nn.TransformerDecoder(layer, num_layers=6, norm=nn.LayerNorm(self.d_model))
         self.box_head = MLP(self.d_model, self.d_model, 4, depth=3)
         self.objectness_head = nn.Linear(self.d_model, 1)
         self.object_head = HierarchicalPrototypeHead(self.d_model, self.d_latent)
