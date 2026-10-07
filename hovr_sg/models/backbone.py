@@ -110,10 +110,11 @@ class PretrainedCLIPVisionEncoder(nn.Module):
             pixel_values=images,
             interpolate_pos_encoding=images.shape[-2:] != (self.image_size, self.image_size),
         )
-        vision_core = getattr(self.model, "vision_model", self.model)
         patch_tokens = outputs.last_hidden_state[:, 1:, :]
-        if hasattr(vision_core, "post_layernorm"):
-            patch_tokens = vision_core.post_layernorm(patch_tokens)
+        # Crucial for FP16 stability: normalize patch tokens before returning them.
+        # This prevents extreme values from overflowing `float16` limits inside the
+        # detector's `autocast` blocks, since HF CLIP omits layer norm on spatial tokens.
+        patch_tokens = torch.nn.functional.layer_norm(patch_tokens, (patch_tokens.shape[-1],))
         if patch_tokens.shape[1] == 0:
             raise RuntimeError("CLIP vision backbone returned no spatial patch tokens")
         return patch_tokens
