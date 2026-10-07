@@ -28,7 +28,7 @@ def make_multihot(indices: Sequence[Sequence[int]], num_classes: int, device: to
 
 
 def prototype_contrastive(z: Tensor, prototypes: Tensor, target: Tensor, temperature: float = 0.07) -> Tensor:
-    logits = torch.einsum("nd,cd->nc", F.normalize(z, dim=-1), F.normalize(prototypes, dim=-1)) / temperature
+    logits = torch.einsum("nd,cd->nc", F.normalize(z, p=2.0, dim=-1, eps=1e-5), F.normalize(prototypes, p=2.0, dim=-1, eps=1e-5)) / temperature
     return F.cross_entropy(logits, target)
 
 
@@ -59,8 +59,8 @@ def sibling_margin(
     """Keep positive prototype above sibling hard negatives in cosine space."""
     if z_leaf.numel() == 0:
         return z_leaf.sum() * 0.0
-    z = F.normalize(z_leaf, dim=-1)
-    p = F.normalize(prototypes, dim=-1)
+    z = F.normalize(z_leaf, p=2.0, dim=-1, eps=1e-5)
+    p = F.normalize(prototypes, p=2.0, dim=-1, eps=1e-5)
     losses = []
     flat_z, flat_y = z.reshape(-1, z.shape[-1]), positive_labels.reshape(-1)
     for vector, label in zip(flat_z, flat_y.tolist()):
