@@ -11,7 +11,9 @@ from .metrics import evaluate_scene_graph
 def decode_predictions(out, sample: dict, ontology) -> dict:
     leaf_prob = out.leaf_logits.softmax(-1)[0]
     group_prob = out.group_logits.sigmoid()[0]
+    objectness = out.objectness_logits.sigmoid()[0]
     object_score, object_label = leaf_prob.max(-1)
+    
     relations = []
     relation_prob = out.relations.get("relation_logits")
     if relation_prob is not None:
@@ -32,11 +34,11 @@ def decode_predictions(out, sample: dict, ontology) -> dict:
             {
                 "slot": index,
                 "label": ontology.leaf_names()[int(object_label[index])],
-                "score": float(object_score[index]),
+                "score": float(object_score[index] * objectness[index]),
                 "group_scores": group_prob[index].tolist(),
                 "box": out.boxes[0, index].tolist(),
             }
-            for index in range(len(object_label)) if float(object_score[index]) > 0.05
+            for index in range(len(object_label)) if float(object_score[index] * objectness[index]) > 0.05
         ],
         "relations": relations,
     }
