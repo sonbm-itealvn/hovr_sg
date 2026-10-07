@@ -239,6 +239,7 @@ class HOVRSG(nn.Module):
                 f"got {tuple(relation_text.shape)}"
             )
         memory = self.input_proj(visual_features)
+        memory = torch.nn.functional.layer_norm(memory, (memory.shape[-1],))
         bsz = memory.shape[0]
         queries = self.query_embed.weight[None].expand(bsz, -1, -1)
         slots = self.query_decoder(queries, memory)
