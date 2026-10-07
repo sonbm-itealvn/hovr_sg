@@ -38,7 +38,7 @@ def decode_predictions(out, sample: dict, ontology) -> dict:
                 "group_scores": group_prob[index].tolist(),
                 "box": out.boxes[0, index].tolist(),
             }
-            for index in range(len(object_label)) if float(object_score[index] * objectness[index]) > 0.05
+            for index in range(len(object_label)) 
         ],
         "relations": relations,
     }
