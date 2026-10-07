@@ -65,14 +65,14 @@ class SparseRelationDecoder(nn.Module):
     def geometry(boxes: Tensor, s: Tensor, o: Tensor) -> Tensor:
         bs, bo = boxes[:, s], boxes[:, o]
         cs, co = (bs[..., :2] + bs[..., 2:]) * 0.5, (bo[..., :2] + bo[..., 2:]) * 0.5
-        ws = (bs[..., 2] - bs[..., 0]).clamp_min(1e-6)
-        hs = (bs[..., 3] - bs[..., 1]).clamp_min(1e-6)
-        wo = (bo[..., 2] - bo[..., 0]).clamp_min(1e-6)
-        ho = (bo[..., 3] - bo[..., 1]).clamp_min(1e-6)
+        ws = (bs[..., 2] - bs[..., 0]).clamp_min(1e-3)
+        hs = (bs[..., 3] - bs[..., 1]).clamp_min(1e-3)
+        wo = (bo[..., 2] - bo[..., 0]).clamp_min(1e-3)
+        ho = (bo[..., 3] - bo[..., 1]).clamp_min(1e-3)
         ix1, iy1 = torch.maximum(bs[..., 0], bo[..., 0]), torch.maximum(bs[..., 1], bo[..., 1])
         ix2, iy2 = torch.minimum(bs[..., 2], bo[..., 2]), torch.minimum(bs[..., 3], bo[..., 3])
         inter = (ix2 - ix1).clamp_min(0) * (iy2 - iy1).clamp_min(0)
-        iou = inter / (ws * hs + wo * ho - inter + 1e-6)
+        iou = inter / (ws * hs + wo * ho - inter + 1e-3)
         return torch.stack([
             (co[..., 0] - cs[..., 0]) / ws, (co[..., 1] - cs[..., 1]) / hs,
             torch.log(wo) - torch.log(ws), torch.log(ho) - torch.log(hs),

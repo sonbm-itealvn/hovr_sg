@@ -110,7 +110,7 @@ class PretrainedCLIPVisionEncoder(nn.Module):
             pixel_values=images,
             interpolate_pos_encoding=images.shape[-2:] != (self.image_size, self.image_size),
         )
-        patch_tokens = outputs.last_hidden_state[:, 1:, :]
+        patch_tokens = self.model.vision_model.post_layernorm(outputs.last_hidden_state[:, 1:, :])
         if patch_tokens.shape[1] == 0:
             raise RuntimeError("CLIP vision backbone returned no spatial patch tokens")
         return patch_tokens
