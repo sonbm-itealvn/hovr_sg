@@ -76,6 +76,8 @@ class UnifiedSceneGraphDataset(Dataset):
         if self.color_jitter is not None:
             image = self.color_jitter(image)
         image_tensor = self.transform(image)
+        if not torch.isfinite(image_tensor).all():
+            raise ValueError(f"Image transform produced NaN/Inf: image_id={record.image_id}, path={path}")
         boxes: List[List[float]] = []
         object_ids: List[int] = []
         leaf_indices: List[int] = []
@@ -97,9 +99,15 @@ class UnifiedSceneGraphDataset(Dataset):
                 y2_norm = (y2 - top) / max(crop_height, 1)
             if horizontal_flip:
                 x1_norm, x2_norm = 1.0 - x2_norm, 1.0 - x1_norm
+            # Zero-area/reversed boxes make geometry and Hungarian costs
+            # ill-conditioned.  Ignore them at ingestion instead of allowing
+            # a malformed annotation to poison an entire training run.
+            x1_norm, x2_norm = max(0.0, min(1.0, x1_norm)), max(0.0, min(1.0, x2_norm))
+            y1_norm, y2_norm = max(0.0, min(1.0, y1_norm)), max(0.0, min(1.0, y2_norm))
+            if x2_norm - x1_norm < 1e-4 or y2_norm - y1_norm < 1e-4:
+                continue
             boxes.append([
-                max(0.0, min(1.0, x1_norm)), max(0.0, min(1.0, y1_norm)),
-                max(0.0, min(1.0, x2_norm)), max(0.0, min(1.0, y2_norm)),
+                x1_norm, y1_norm, x2_norm, y2_norm,
             ])
             object_ids.append(int(obj.id))
             leaf_indices.append(self.ontology.leaf_index(label))

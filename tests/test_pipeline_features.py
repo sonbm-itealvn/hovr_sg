@@ -4,7 +4,7 @@ import torch
 
 from hovr_sg.losses import HungarianMatcher
 from hovr_sg.models.hovr_sg import SparseRelationDecoder
-from scripts.train import build_stage_schedule
+from scripts.train import atomic_step, build_stage_schedule, finite_nested
 
 
 def test_hungarian_matcher_is_one_to_one():
@@ -56,3 +56,17 @@ def test_stage_schedule_can_extend_last_stage_for_resume():
         ("detector_warmup", 2), ("hierarchical", 2),
         ("relation", 3), ("joint", 13),
     ]
+
+
+def test_atomic_step_rejects_nonfinite_gradient():
+    parameter = torch.nn.Parameter(torch.tensor([1.0]))
+    optimizer = torch.optim.AdamW([parameter], lr=1e-3, eps=1e-6)
+    scaler = torch.amp.GradScaler("cuda", enabled=False)
+    parameter.grad = torch.tensor([float("nan")])
+    assert atomic_step(optimizer, scaler, [parameter], 0.25) is False
+    assert parameter.item() == 1.0
+
+
+def test_checkpoint_finite_validator_rejects_nan():
+    assert finite_nested({"state": torch.ones(2), "metadata": [1, "ok"]})
+    assert not finite_nested({"state": torch.tensor([float("nan")])})

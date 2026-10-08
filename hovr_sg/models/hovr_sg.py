@@ -33,6 +33,12 @@ class HierarchicalPrototypeHead(nn.Module):
         self.log_tau_leaf = nn.Parameter(torch.log(torch.tensor(0.07)))
         self.log_tau_group = nn.Parameter(torch.log(torch.tensor(0.07)))
 
+    @staticmethod
+    def _temperature(logit: Tensor) -> Tensor:
+        # A bounded sigmoid parameterisation has finite derivatives for every
+        # finite input, unlike exp(log_tau) followed by clamp.
+        return 0.01 + 0.09 * torch.sigmoid(logit)
+
     def forward(self, slots: Tensor, leaf_text: Tensor, group_text: Tensor) -> Dict[str, Tensor]:
         # All inputs are already FP32 (autocast is disabled for the detector).
         z_leaf = F.normalize(self.leaf_proj(slots), p=2.0, dim=-1, eps=1e-5)
@@ -44,8 +50,8 @@ class HierarchicalPrototypeHead(nn.Module):
         return {
             "z_leaf": z_leaf,
             "z_group": z_group,
-            "leaf_logits": leaf_logits / self.log_tau_leaf.exp().clamp(min=0.01, max=0.10),
-            "group_logits": group_logits / self.log_tau_group.exp().clamp(min=0.01, max=0.10),
+            "leaf_logits": leaf_logits / self._temperature(self.log_tau_leaf),
+            "group_logits": group_logits / self._temperature(self.log_tau_group),
         }
 
 
@@ -61,6 +67,10 @@ class SparseRelationDecoder(nn.Module):
         self.relationness = nn.Linear(hidden, 1)
         self.rel_proj = nn.Linear(hidden, d_latent)
         self.log_tau_rel = nn.Parameter(torch.log(torch.tensor(0.07)))
+
+    @staticmethod
+    def _temperature(logit: Tensor) -> Tensor:
+        return 0.01 + 0.09 * torch.sigmoid(logit)
 
     @staticmethod
     def geometry(boxes: Tensor, s: Tensor, o: Tensor) -> Tensor:
@@ -184,7 +194,7 @@ class SparseRelationDecoder(nn.Module):
         }
         if relation_text is not None:
             relation_text = F.normalize(relation_text.float(), p=2.0, dim=-1, eps=1e-5)
-            output["relation_logits"] = torch.einsum("bkd,rd->bkr", z_rel, relation_text) / self.log_tau_rel.exp().clamp(min=0.01, max=0.10)
+            output["relation_logits"] = torch.einsum("bkd,rd->bkr", z_rel, relation_text) / self._temperature(self.log_tau_rel)
         return output
 
 

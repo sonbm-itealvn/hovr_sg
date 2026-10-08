@@ -227,7 +227,7 @@ python scripts/train.py \
   --output-dir runs/hovr_v1
 ```
 
-Training hiện dùng Hungarian one-to-one matching kiểu DETR, union-region pooling cho relation pairs, stage scheduler `detector_warmup → hierarchical → relation → joint`, AMP khi chạy CUDA và train-only augmentation có cập nhật bounding boxes. Có thể thay checkpoint CLIP bằng model tương thích qua `--backbone-name`, hoặc mở fine-tuning có kiểm soát bằng `--train-backbone` hay `model.unfreeze_last_n_layers`. Checkpoint lưu encoder/model state, text prototypes, preprocessing, dimension đã resolve và stage metadata. Fallback `tiny_cnn` chỉ chứng minh data/model/loss plumbing; nó không đại diện cho open-vocabulary performance.
+Training hiện dùng Hungarian one-to-one matching kiểu DETR, union-region pooling cho relation pairs, stage scheduler `detector_warmup → hierarchical → relation → joint`, detector FP32 mặc định và train-only augmentation có cập nhật bounding boxes. AMP chỉ là tùy chọn cho backbone sau khi pilot FP32 ổn định. Có thể thay checkpoint CLIP bằng model tương thích qua `--backbone-name`, hoặc mở fine-tuning có kiểm soát bằng `--train-backbone` hay `model.unfreeze_last_n_layers`. Checkpoint lưu encoder/model state, text prototypes, preprocessing, dimension đã resolve và stage metadata. Fallback `tiny_cnn` chỉ chứng minh data/model/loss plumbing; nó không đại diện cho open-vocabulary performance.
 
 ## 6. Evaluation
 

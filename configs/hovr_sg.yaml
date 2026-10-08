@@ -26,7 +26,8 @@ training:
   max_grad_norm: 0.25
   image_size: 224
   device: auto
-  amp: true
+  # Keep the full training graph in FP32. Enable only after a clean pilot run.
+  amp: false
   save_every: 1
 
 augmentation:

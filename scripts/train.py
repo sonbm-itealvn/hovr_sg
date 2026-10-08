@@ -292,15 +292,66 @@ def git_commit() -> str:
         return "unknown"
 
 
-def finite_parameters(modules) -> bool:
-    """Return whether all parameters and gradients in modules are finite."""
-    for module in modules:
-        for parameter in module.parameters():
-            if not torch.isfinite(parameter).all():
-                return False
-            if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
-                return False
+def finite_nested(value) -> bool:
+    """Recursively validate tensors nested in a state/checkpoint object."""
+    if torch.is_tensor(value):
+        return bool(torch.isfinite(value).all())
+    if isinstance(value, dict):
+        return all(finite_nested(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return all(finite_nested(item) for item in value)
     return True
+
+
+def optimizer_state_is_finite(optimizer) -> bool:
+    return finite_nested(optimizer.state_dict())
+
+
+def finite_gradients(parameters) -> bool:
+    return all(
+        parameter.grad is None or bool(torch.isfinite(parameter.grad).all())
+        for parameter in parameters
+    )
+
+
+def atomic_step(optimizer, scaler, trainable_params, max_grad_norm: float) -> bool:
+    """Apply one update only if params and optimizer state remain finite.
+
+    The parameter snapshot makes the optimizer update transactional: if an
+    Adam/AMP kernel produces a non-finite value despite finite gradients, the
+    update is rolled back and its state is reset before the next batch.
+    """
+    snapshot = [parameter.detach().clone() for parameter in trainable_params]
+    grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
+    if not torch.isfinite(grad_norm) or not finite_gradients(trainable_params):
+        optimizer.zero_grad(set_to_none=True)
+        if scaler.is_enabled():
+            scaler.update()
+        return False
+    if scaler.is_enabled():
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        optimizer.step()
+    if all(torch.isfinite(parameter).all() for parameter in trainable_params) and optimizer_state_is_finite(optimizer):
+        return True
+    for parameter, previous in zip(trainable_params, snapshot):
+        parameter.data.copy_(previous)
+        optimizer.state.pop(parameter, None)
+    optimizer.zero_grad(set_to_none=True)
+    return False
+
+
+def validate_training_batch(images, samples: List[dict]) -> None:
+    if not torch.isfinite(images).all():
+        ids = [str(sample.get("image_id", "unknown")) for sample in samples]
+        raise ValueError(f"Non-finite image tensor detected before backbone; image_ids={ids}")
+    for sample in samples:
+        boxes = sample["boxes"]
+        if boxes.numel() and not torch.isfinite(boxes).all():
+            raise ValueError(
+                f"Non-finite target boxes detected before matching; image_id={sample.get('image_id')}"
+            )
 
 
 def build_checkpoint(
@@ -341,6 +392,14 @@ def build_checkpoint(
             "image_std": model_cfg.get("image_std"),
         },
     }
+
+
+def save_checkpoint_atomic(checkpoint: dict, path: Path) -> None:
+    if not finite_nested(checkpoint):
+        raise FloatingPointError(f"Refusing to save non-finite checkpoint: {path}")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    torch.save(checkpoint, temporary)
+    temporary.replace(path)
 
 
 def main() -> None:
@@ -436,6 +495,12 @@ def main() -> None:
         resume_state = torch.load(args.resume, map_location="cpu", weights_only=False)
         if resume_state.get("checkpoint_type") not in {None, "hovr_sg_official_checkpoint"}:
             raise ValueError("The resume file is not a compatible HOVR-SG checkpoint")
+        for key in ("encoder", "model", "prototypes", "optimizer", "scaler"):
+            if key in resume_state and resume_state[key] is not None and not finite_nested(resume_state[key]):
+                raise ValueError(
+                    f"Refusing to resume from {args.resume}: checkpoint field '{key}' contains NaN/Inf. "
+                    "Start from a clean checkpoint."
+                )
         encoder.load_state_dict(resume_state["encoder"])
         model.load_state_dict(resume_state["model"])
         if resume_state.get("prototypes"):
@@ -528,6 +593,7 @@ def main() -> None:
             skipped_nonfinite = 0
             for batch in progress:
                 images = batch["images"].to(device)
+                validate_training_batch(images, batch["samples"])
                 targets = make_targets(
                     batch["samples"], ontology, int(model_cfg.get("num_queries", 64)),
                     device, len(ontology.group_names()),
@@ -539,9 +605,15 @@ def main() -> None:
                 with torch.set_grad_enabled(model_cfg.get("train_backbone", False)):
                     with torch.autocast(device_type=device.type, enabled=amp_enabled):
                         visual = encoder(images)
-                # Never pass an autocast tensor with invalid/extreme values to the FP32 detector.
-                visual = torch.nan_to_num(visual.float(), nan=0.0, posinf=10.0, neginf=-10.0)
-                visual = visual.clamp(-10.0, 10.0)
+                if not torch.isfinite(visual).all():
+                    ids = [str(sample.get("image_id", "unknown")) for sample in batch["samples"]]
+                    raise FloatingPointError(
+                        f"Backbone produced NaN/Inf; image_ids={ids}. "
+                        "Disable AMP and verify the pretrained backbone/cache."
+                    )
+                # Keep the detector input in a conservative FP32 range without
+                # masking invalid values from the data or backbone.
+                visual = visual.float().clamp(-10.0, 10.0)
                 # Model forward + loss in FP32 — no autocast here.
                 out = model(
                     visual, prototypes.leaf, prototypes.groups, prototypes.relations,
@@ -568,29 +640,13 @@ def main() -> None:
                 if scaler.is_enabled():
                     scaler.scale(terms["total"]).backward()
                     scaler.unscale_(optimizer)
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        trainable_params, float(cfg.get("training", {}).get("max_grad_norm", 0.5))
-                    )
-                    if torch.isfinite(grad_norm) and finite_parameters((encoder, model, prototypes)):
-                        scaler.step(optimizer)
-                        scaler.update()
-                    else:
-                        skipped_nonfinite += 1
-                        optimizer.zero_grad(set_to_none=True)
-                        # ``unscale_`` already records the invalid gradient; step() will
-                        # be skipped by GradScaler and update() will reduce its scale.
-                        scaler.step(optimizer)
-                        scaler.update()
                 else:
                     terms["total"].backward()
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        trainable_params, float(cfg.get("training", {}).get("max_grad_norm", 0.5))
-                    )
-                    if torch.isfinite(grad_norm) and finite_parameters((encoder, model, prototypes)):
-                        optimizer.step()
-                    else:
-                        skipped_nonfinite += 1
-                        optimizer.zero_grad(set_to_none=True)
+                if not atomic_step(
+                    optimizer, scaler, trainable_params,
+                    float(cfg.get("training", {}).get("max_grad_norm", 0.5)),
+                ):
+                    skipped_nonfinite += 1
                 running += float(terms["total"].detach())
                 progress.set_postfix(stage=stage_name, loss=f"{running / max(progress.n, 1):.4f}")
 
@@ -622,9 +678,9 @@ def main() -> None:
                 ontology, args.ontology, best_score, val_metrics,
                 best_metrics=best_metrics, history=history,
             )
-            torch.save(checkpoint, out_dir / "last.pt")
+            save_checkpoint_atomic(checkpoint, out_dir / "last.pt")
             if score >= best_score and (val_loader is not None or current_epoch == epochs):
-                torch.save(checkpoint, out_dir / "best.pt")
+                save_checkpoint_atomic(checkpoint, out_dir / "best.pt")
                 (out_dir / "best_manifest.json").write_text(
                     json.dumps({
                         "checkpoint": "best.pt",
@@ -639,7 +695,10 @@ def main() -> None:
                     }, indent=2), encoding="utf-8",
                 )
     if not (out_dir / "best.pt").exists() and (out_dir / "last.pt").exists():
-        torch.save(torch.load(out_dir / "last.pt", map_location="cpu", weights_only=False), out_dir / "best.pt")
+        save_checkpoint_atomic(
+            torch.load(out_dir / "last.pt", map_location="cpu", weights_only=False),
+            out_dir / "best.pt",
+        )
     (out_dir / "training_summary.json").write_text(
         json.dumps({
             "epochs": epochs, "device": str(device), "amp_enabled": amp_enabled,

@@ -37,7 +37,7 @@ Với dữ liệu Visual Genome, Open Images hoặc GQA, chạy converter tươn
 
 ## 3. Training model release
 
-Lệnh dưới đây dùng CLIP pretrained mặc định, augmentation train-only, bốn training stages, AMP và validation. `best.pt` được chọn theo `validation.selection_metric`, mặc định là `object_mAP50_95`.
+Lệnh dưới đây dùng CLIP pretrained mặc định, augmentation train-only, bốn training stages, detector FP32 và validation. `best.pt` được chọn theo `validation.selection_metric`, mặc định là `object_mAP50_95`.
 
 ```bash
 !python scripts/train.py \
@@ -52,14 +52,14 @@ Lệnh dưới đây dùng CLIP pretrained mặc định, augmentation train-onl
 
 ### Cấu hình ngắn cho Colab T4
 
-Đoạn cấu hình trong ảnh không đặt số epoch. `validation.frequency: 1` chỉ có nghĩa là validation sau mỗi epoch; `selection_metric: relation_Recall@50` chỉ quyết định metric dùng để chọn `best.pt`; `training.amp: true` bật mixed precision trên CUDA/T4.
+Đoạn cấu hình trong ảnh không đặt số epoch. `validation.frequency: 1` chỉ có nghĩa là validation sau mỗi epoch; `selection_metric: relation_Recall@50` chỉ quyết định metric dùng để chọn `best.pt`; cấu hình mặc định giữ detector ở FP32 để ưu tiên ổn định số học trên T4.
 
 Nếu bạn chỉ có khoảng 4 giờ 30 phút, đặt trong cell tạo config:
 
 ```python
 EPOCHS = 2
 config['training']['epochs'] = EPOCHS
-config['training']['amp'] = True
+config['training']['amp'] = False
 config['validation']['frequency'] = 1
 config['validation']['selection_metric'] = 'object_mAP50_95'
 ```
@@ -93,22 +93,23 @@ validation:
   selection_metric: relation_Recall@50
 ```
 
-Để bật AMP, đặt:
+AMP là tùy chọn và chỉ nên bật sau khi pilot FP32 chạy ổn định. Nếu cần bật AMP:
 
 ```yaml
 training:
   amp: true
 ```
 
-AMP chỉ được kích hoạt khi runtime có CUDA; CPU sẽ tự chạy FP32.
+AMP chỉ được kích hoạt khi runtime có CUDA; CPU sẽ tự chạy FP32. Detector vẫn được thiết kế để chạy FP32; AMP chỉ áp dụng cho backbone.
 
 ### Xử lý lỗi `matrix contains invalid numeric entries`
 
 Nếu log xuất hiện `outputs.boxes has NaN` hoặc `outputs.leaf_logits has NaN`, đó là dấu
-hiệu một optimizer update trước đó đã bị tràn số. Bản training hiện tại đã có guard
-finite-value: kiểm tra output/loss/gradient trước matcher và trước optimizer step, tự bỏ
-qua batch không hữu hạn, giảm scale AMP khi cần, đồng thời dùng `AdamW eps` và gradient
-clipping bảo thủ hơn cho Colab. Cấu hình mặc định đã giảm learning rate xuống `3e-5`.
+hiệu một optimizer update trước đó đã bị tràn số. Bản training hiện tại đã có pipeline
+finite-value: kiểm tra dữ liệu và backbone trước forward, kiểm tra output/loss/gradient,
+thực hiện optimizer step theo transaction có rollback, xác thực optimizer state và chỉ
+ghi checkpoint atomic khi toàn bộ state hữu hạn. Cấu hình mặc định giữ detector FP32,
+giảm learning rate xuống `3e-5`, dùng `AdamW eps` và gradient clipping bảo thủ hơn.
 
 Không resume từ `last.pt` được tạo sau khi log đã báo NaN, vì weights hoặc optimizer state
 có thể đã bị nhiễm NaN. Hãy chạy lại từ checkpoint sạch (hoặc từ đầu) với code mới:
