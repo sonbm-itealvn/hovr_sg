@@ -26,7 +26,7 @@ def deterministic_text_embeddings(labels: Iterable[str], dim: int = 512) -> Tens
         vals = torch.tensor(list(raw[: dim * 4]), dtype=torch.float32).view(-1, 4).mean(-1)
         vals = (vals - vals.mean()) / vals.std().clamp_min(1e-6)
         rows.append(vals)
-    return F.normalize(torch.stack(rows), p=2.0, dim=-1, eps=1e-5)
+    return F.normalize(torch.stack(rows).float(), p=2.0, dim=-1, eps=1e-5).to(rows[0].dtype)
 
 
 class CLIPTextPrototypeEncoder:
@@ -78,7 +78,7 @@ class CLIPTextPrototypeEncoder:
         ).to(self.device)
         outputs = self.model(**tokens)
         embeddings = outputs.text_embeds
-        return F.normalize(embeddings.float(), p=2.0, dim=-1, eps=1e-5)
+        return F.normalize(embeddings.float(), p=2.0, dim=-1, eps=1e-5).to(embeddings.dtype)
 
 
 class PrototypeBank(nn.Module):
@@ -87,9 +87,9 @@ class PrototypeBank(nn.Module):
     def __init__(self, leaf: Tensor, groups: Tensor, relations: Tensor, trainable: bool = False):
         super().__init__()
         values = {
-            "leaf": F.normalize(leaf.float(), p=2.0, dim=-1, eps=1e-5),
-            "groups": F.normalize(groups.float(), p=2.0, dim=-1, eps=1e-5),
-            "relations": F.normalize(relations.float(), p=2.0, dim=-1, eps=1e-5),
+            "leaf": F.normalize(leaf.float(), p=2.0, dim=-1, eps=1e-5).to(leaf.dtype),
+            "groups": F.normalize(groups.float(), p=2.0, dim=-1, eps=1e-5).to(groups.dtype),
+            "relations": F.normalize(relations.float(), p=2.0, dim=-1, eps=1e-5).to(relations.dtype),
         }
         for name, value in values.items():
             if trainable:

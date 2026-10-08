@@ -34,10 +34,10 @@ class HierarchicalPrototypeHead(nn.Module):
         self.log_tau_group = nn.Parameter(torch.log(torch.tensor(0.07)))
 
     def forward(self, slots: Tensor, leaf_text: Tensor, group_text: Tensor) -> Dict[str, Tensor]:
-        z_leaf = F.normalize(self.leaf_proj(slots), p=2.0, dim=-1, eps=1e-5)
-        z_group = F.normalize(self.group_proj(slots), p=2.0, dim=-1, eps=1e-5)
-        leaf_text = F.normalize(leaf_text, p=2.0, dim=-1, eps=1e-5)
-        group_text = F.normalize(group_text, p=2.0, dim=-1, eps=1e-5)
+        z_leaf = F.normalize(self.leaf_proj(slots).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
+        z_group = F.normalize(self.group_proj(slots).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
+        leaf_text = F.normalize(leaf_text.float(), p=2.0, dim=-1, eps=1e-5).to(leaf_text.dtype)
+        group_text = F.normalize(group_text.float(), p=2.0, dim=-1, eps=1e-5).to(group_text.dtype)
         leaf_logits = torch.einsum("bqd,cd->bqc", z_leaf, leaf_text)
         group_logits = torch.einsum("bqd,gd->bqg", z_group, group_text)
         return {
@@ -170,7 +170,7 @@ class SparseRelationDecoder(nn.Module):
         ness = torch.gather(ness_all, 1, top)
         s_idx = idx_s[None].expand(bsz, -1).gather(1, top)
         o_idx = idx_o[None].expand(bsz, -1).gather(1, top)
-        z_rel = F.normalize(self.rel_proj(pair), p=2.0, dim=-1, eps=1e-5)
+        z_rel = F.normalize(self.rel_proj(pair).float(), p=2.0, dim=-1, eps=1e-5).to(pair.dtype)
         output = {
             "pair_features": pair,
             "union_features": torch.gather(union_feat, 1, top[..., None].expand(-1, -1, dim)),
@@ -181,7 +181,7 @@ class SparseRelationDecoder(nn.Module):
             "selected_object_slots": chosen,
         }
         if relation_text is not None:
-            relation_text = F.normalize(relation_text, p=2.0, dim=-1, eps=1e-5)
+            relation_text = F.normalize(relation_text.float(), p=2.0, dim=-1, eps=1e-5).to(relation_text.dtype)
             output["relation_logits"] = torch.einsum("bkd,rd->bkr", z_rel, relation_text) / self.log_tau_rel.exp().clamp(min=0.01, max=0.10)
         return output
 
