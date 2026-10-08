@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import random
+import random; import math
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -85,6 +85,8 @@ class UnifiedSceneGraphDataset(Dataset):
             if label is None:
                 continue
             x1, y1, x2, y2 = obj.bbox
+            if any(math.isnan(v) or math.isinf(v) for v in (x1, y1, x2, y2)):
+                continue
             x1_norm, y1_norm = x1 / max(record.width, 1), y1 / max(record.height, 1)
             x2_norm, y2_norm = x2 / max(record.width, 1), y2 / max(record.height, 1)
             if crop_params is not None:

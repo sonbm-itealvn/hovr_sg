@@ -34,8 +34,8 @@ class HierarchicalPrototypeHead(nn.Module):
         self.log_tau_group = nn.Parameter(torch.log(torch.tensor(0.07)))
 
     def forward(self, slots: Tensor, leaf_text: Tensor, group_text: Tensor) -> Dict[str, Tensor]:
-        z_leaf = F.normalize(self.leaf_proj(slots).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
-        z_group = F.normalize(self.group_proj(slots).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
+        z_leaf = F.normalize(self.leaf_proj(slots).clamp(-65000.0, 65000.0).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
+        z_group = F.normalize(self.group_proj(slots).clamp(-65000.0, 65000.0).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
         leaf_text = F.normalize(leaf_text.float(), p=2.0, dim=-1, eps=1e-5).to(leaf_text.dtype)
         group_text = F.normalize(group_text.float(), p=2.0, dim=-1, eps=1e-5).to(group_text.dtype)
         leaf_logits = torch.einsum("bqd,cd->bqc", z_leaf, leaf_text)
@@ -170,7 +170,7 @@ class SparseRelationDecoder(nn.Module):
         ness = torch.gather(ness_all, 1, top)
         s_idx = idx_s[None].expand(bsz, -1).gather(1, top)
         o_idx = idx_o[None].expand(bsz, -1).gather(1, top)
-        z_rel = F.normalize(self.rel_proj(pair).float(), p=2.0, dim=-1, eps=1e-5).to(pair.dtype)
+        z_rel = F.normalize(self.rel_proj(pair).clamp(-65000.0, 65000.0).float(), p=2.0, dim=-1, eps=1e-5).to(pair.dtype)
         output = {
             "pair_features": pair,
             "union_features": torch.gather(union_feat, 1, top[..., None].expand(-1, -1, dim)),
