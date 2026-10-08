@@ -521,18 +521,21 @@ def main() -> None:
                 )
                 targets["raw_samples"] = batch["samples"]
                 optimizer.zero_grad(set_to_none=True)
+                # FP16 autocast wraps ONLY the frozen CLIP backbone (saves ~60% VRAM).
+                # The detector/decoder runs entirely in FP32 to prevent NaN overflows.
                 with torch.set_grad_enabled(model_cfg.get("train_backbone", False)):
-                    visual = encoder(images)
-                with torch.autocast(device_type=device.type, enabled=amp_enabled):
-                    out = model(
-                        visual, prototypes.leaf, prototypes.groups, prototypes.relations,
-                        top_m=int(model_cfg.get("top_m_objects", 16)),
-                        top_k_pairs=int(model_cfg.get("top_k_pairs", 64)),
-                    )
-                    matches = matcher(out, batch["samples"])
-                    terms = compute_loss(out, targets, matches, prototypes, ontology, active_weights)
-                    if uncertainty_weighter is not None:
-                        terms["total"] = uncertainty_weighter(terms, active_weights)
+                    with torch.autocast(device_type=device.type, enabled=amp_enabled):
+                        visual = encoder(images)
+                # Model forward + loss in FP32 — no autocast here.
+                out = model(
+                    visual, prototypes.leaf, prototypes.groups, prototypes.relations,
+                    top_m=int(model_cfg.get("top_m_objects", 16)),
+                    top_k_pairs=int(model_cfg.get("top_k_pairs", 64)),
+                )
+                matches = matcher(out, batch["samples"])
+                terms = compute_loss(out, targets, matches, prototypes, ontology, active_weights)
+                if uncertainty_weighter is not None:
+                    terms["total"] = uncertainty_weighter(terms, active_weights)
                 if scaler.is_enabled():
                     scaler.scale(terms["total"]).backward()
                     scaler.unscale_(optimizer)

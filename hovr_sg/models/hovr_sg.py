@@ -34,10 +34,11 @@ class HierarchicalPrototypeHead(nn.Module):
         self.log_tau_group = nn.Parameter(torch.log(torch.tensor(0.07)))
 
     def forward(self, slots: Tensor, leaf_text: Tensor, group_text: Tensor) -> Dict[str, Tensor]:
-        z_leaf = F.normalize(self.leaf_proj(slots).clamp(-65000.0, 65000.0).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
-        z_group = F.normalize(self.group_proj(slots).clamp(-65000.0, 65000.0).float(), p=2.0, dim=-1, eps=1e-5).to(slots.dtype)
-        leaf_text = F.normalize(leaf_text.float(), p=2.0, dim=-1, eps=1e-5).to(leaf_text.dtype)
-        group_text = F.normalize(group_text.float(), p=2.0, dim=-1, eps=1e-5).to(group_text.dtype)
+        # All inputs are already FP32 (autocast is disabled for the detector).
+        z_leaf = F.normalize(self.leaf_proj(slots), p=2.0, dim=-1, eps=1e-5)
+        z_group = F.normalize(self.group_proj(slots), p=2.0, dim=-1, eps=1e-5)
+        leaf_text = F.normalize(leaf_text.float(), p=2.0, dim=-1, eps=1e-5)
+        group_text = F.normalize(group_text.float(), p=2.0, dim=-1, eps=1e-5)
         leaf_logits = torch.einsum("bqd,cd->bqc", z_leaf, leaf_text)
         group_logits = torch.einsum("bqd,gd->bqg", z_group, group_text)
         return {
@@ -142,6 +143,7 @@ class SparseRelationDecoder(nn.Module):
         relation_text: Optional[Tensor] = None, top_m: int = 100, top_k_pairs: int = 256,
         visual_memory: Optional[Tensor] = None,
     ) -> Dict[str, Tensor]:
+        # All inputs are already FP32 (autocast is disabled for the detector).
         bsz, _, dim = slots.shape
         m = min(top_m, slots.shape[1])
         chosen = object_scores.topk(m, dim=1).indices
@@ -162,15 +164,15 @@ class SparseRelationDecoder(nn.Module):
             )
         union_feat = self.union_region_features(visual_memory, selected_boxes, idx_s, idx_o)
         pair = self.pair_mlp(torch.cat([s_feat, o_feat, s_feat * o_feat, union_feat, geom], dim=-1))
-        with torch.autocast(device_type=pair.device.type, enabled=False): pair = self.context(pair.float()).to(pair.dtype)
-        ness_all = self.relationness(pair).squeeze(-1).clamp(-20.0, 20.0)
+        pair = self.context(pair)
+        ness_all = self.relationness(pair).squeeze(-1)
         k = min(top_k_pairs, pair.shape[1])
         top = ness_all.topk(k, dim=1).indices
         pair = torch.gather(pair, 1, top[..., None].expand(-1, -1, pair.shape[-1]))
         ness = torch.gather(ness_all, 1, top)
         s_idx = idx_s[None].expand(bsz, -1).gather(1, top)
         o_idx = idx_o[None].expand(bsz, -1).gather(1, top)
-        z_rel = F.normalize(self.rel_proj(pair).clamp(-65000.0, 65000.0).float(), p=2.0, dim=-1, eps=1e-5).to(pair.dtype)
+        z_rel = F.normalize(self.rel_proj(pair), p=2.0, dim=-1, eps=1e-5)
         output = {
             "pair_features": pair,
             "union_features": torch.gather(union_feat, 1, top[..., None].expand(-1, -1, dim)),
@@ -181,7 +183,7 @@ class SparseRelationDecoder(nn.Module):
             "selected_object_slots": chosen,
         }
         if relation_text is not None:
-            relation_text = F.normalize(relation_text.float(), p=2.0, dim=-1, eps=1e-5).to(relation_text.dtype)
+            relation_text = F.normalize(relation_text.float(), p=2.0, dim=-1, eps=1e-5)
             output["relation_logits"] = torch.einsum("bkd,rd->bkr", z_rel, relation_text) / self.log_tau_rel.exp().clamp(min=0.01, max=0.10)
         return output
 
@@ -238,13 +240,15 @@ class HOVRSG(nn.Module):
                 f"relation_text must have shape [predicates, {self.d_latent}], "
                 f"got {tuple(relation_text.shape)}"
             )
+        # --- Everything below runs in FP32 (autocast is disabled by the caller) ---
+        visual_features = torch.nan_to_num(visual_features.float(), nan=0.0, posinf=1e4, neginf=-1e4)
         memory = self.input_proj(visual_features)
-        memory = torch.nn.functional.layer_norm(memory.float(), (memory.shape[-1],)).to(memory.dtype)
+        memory = F.layer_norm(memory, (memory.shape[-1],))
         bsz = memory.shape[0]
         queries = self.query_embed.weight[None].expand(bsz, -1, -1)
-        with torch.autocast(device_type=memory.device.type, enabled=False): slots = self.query_decoder(queries.float(), memory.float()).to(memory.dtype)
-        boxes = self.box_head(slots).clamp(-20.0, 20.0).sigmoid()
-        objectness_logits = self.objectness_head(slots).squeeze(-1).clamp(-20.0, 20.0)
+        slots = self.query_decoder(queries, memory)
+        boxes = self.box_head(slots).sigmoid()
+        objectness_logits = self.objectness_head(slots).squeeze(-1)
         object_scores = objectness_logits.sigmoid()
         obj = self.object_head(slots, leaf_text, group_text)
         relations = self.relation_head(
