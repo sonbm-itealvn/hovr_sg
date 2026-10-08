@@ -163,7 +163,7 @@ class SparseRelationDecoder(nn.Module):
         union_feat = self.union_region_features(visual_memory, selected_boxes, idx_s, idx_o)
         pair = self.pair_mlp(torch.cat([s_feat, o_feat, s_feat * o_feat, union_feat, geom], dim=-1))
         with torch.autocast(device_type=pair.device.type, enabled=False): pair = self.context(pair.float()).to(pair.dtype)
-        ness_all = self.relationness(pair).squeeze(-1)
+        ness_all = self.relationness(pair).squeeze(-1).clamp(-20.0, 20.0)
         k = min(top_k_pairs, pair.shape[1])
         top = ness_all.topk(k, dim=1).indices
         pair = torch.gather(pair, 1, top[..., None].expand(-1, -1, pair.shape[-1]))
@@ -239,12 +239,12 @@ class HOVRSG(nn.Module):
                 f"got {tuple(relation_text.shape)}"
             )
         memory = self.input_proj(visual_features)
-        memory = torch.nn.functional.layer_norm(memory, (memory.shape[-1],))
+        memory = torch.nn.functional.layer_norm(memory.float(), (memory.shape[-1],)).to(memory.dtype)
         bsz = memory.shape[0]
         queries = self.query_embed.weight[None].expand(bsz, -1, -1)
         with torch.autocast(device_type=memory.device.type, enabled=False): slots = self.query_decoder(queries.float(), memory.float()).to(memory.dtype)
-        boxes = self.box_head(slots).sigmoid()
-        objectness_logits = self.objectness_head(slots).squeeze(-1)
+        boxes = self.box_head(slots).clamp(-20.0, 20.0).sigmoid()
+        objectness_logits = self.objectness_head(slots).squeeze(-1).clamp(-20.0, 20.0)
         object_scores = objectness_logits.sigmoid()
         obj = self.object_head(slots, leaf_text, group_text)
         relations = self.relation_head(
