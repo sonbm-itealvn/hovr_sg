@@ -125,7 +125,7 @@ class UncertaintyWeighting(nn.Module):
             if log_var is None:
                 total = total + fixed_weights.get(name, 1.0) * loss_val
                 continue
-            precision = torch.exp(-log_var[0])  # 1 / sigma^2
+            precision = torch.exp(-log_var[0].clamp(-10.0, 10.0))  # 1 / sigma^2
             total = total + fixed_weights.get(name, 1.0) * (0.5 * precision * loss_val + 0.5 * log_var[0])
         return total
 
