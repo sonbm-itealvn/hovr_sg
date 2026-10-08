@@ -58,7 +58,22 @@ class HungarianMatcher:
                 + self.cost_bbox * bbox_cost
                 + self.cost_objectness * objectness_cost
             )
+            
+            if torch.isnan(cost).any() or torch.isinf(cost).any():
+                print(f"\n[DEBUG] NaN/Inf found in cost!")
+                print(f"[DEBUG] class_cost has NaN: {torch.isnan(class_cost).any().item()}")
+                print(f"[DEBUG] bbox_cost has NaN: {torch.isnan(bbox_cost).any().item()}")
+                print(f"[DEBUG] objectness_cost has NaN: {torch.isnan(objectness_cost).any().item()}")
+                print(f"[DEBUG] outputs.boxes has NaN: {torch.isnan(outputs.boxes).any().item()}")
+                print(f"[DEBUG] outputs.leaf_logits has NaN: {torch.isnan(outputs.leaf_logits).any().item()}")
+                print(f"[DEBUG] target_boxes has NaN: {torch.isnan(target_boxes).any().item()}")
+                print(f"[DEBUG] probabilities has NaN: {torch.isnan(probabilities).any().item()}")
+                print(f"[DEBUG] outputs.z_leaf has NaN: {torch.isnan(outputs.z_leaf).any().item()}")
+                print(f"[DEBUG] outputs.object_scores has NaN: {torch.isnan(outputs.object_scores).any().item()}")
+                torch.save({"out": outputs, "batch": samples}, "nan_debug.pt")
+                raise ValueError("matrix contains invalid numeric entries (intercepted)")
             query_idx, target_idx = linear_sum_assignment(cost.float().cpu().numpy())
+
             matches.append((
                 torch.as_tensor(query_idx, dtype=torch.long, device=outputs.boxes.device),
                 torch.as_tensor(target_idx, dtype=torch.long, device=outputs.boxes.device),
