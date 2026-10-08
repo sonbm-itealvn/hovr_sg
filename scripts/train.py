@@ -159,7 +159,6 @@ def compute_loss(out, targets, matches, prototypes: PrototypeBank, ontology: Ont
             for query_index, target_index in zip(query_indices.tolist(), target_indices.tolist()):
                 if target_index < len(sample["object_ids"]):
                     query_for_object[int(sample["object_ids"][target_index])] = int(query_index)
-        selected_queries = out.relations["selected_object_slots"][batch_index]
         pair_s = out.relations["subject_slot"][batch_index]
         pair_o = out.relations["object_slot"][batch_index]
         for rel in sample["relations"]:
@@ -167,11 +166,9 @@ def compute_loss(out, targets, matches, prototypes: PrototypeBank, ontology: Ont
             object_query = query_for_object.get(int(rel["object_id"]))
             if subject_query is None or object_query is None:
                 continue
-            subject_local = (selected_queries == subject_query).nonzero(as_tuple=False)
-            object_local = (selected_queries == object_query).nonzero(as_tuple=False)
-            if not len(subject_local) or not len(object_local):
-                continue
-            hits = ((pair_s == int(subject_local[0])) & (pair_o == int(object_local[0]))).nonzero(as_tuple=False)
+            # Relation decoder emits original/global query ids, not local
+            # indices inside the top-m selected object list.
+            hits = ((pair_s == subject_query) & (pair_o == object_query)).nonzero(as_tuple=False)
             if len(hits):
                 relation_index = int(hits[0])
                 relation_targets[batch_index, relation_index] = 1.0

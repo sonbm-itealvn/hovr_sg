@@ -4,6 +4,7 @@ import torch
 
 from hovr_sg.losses import HungarianMatcher
 from hovr_sg.models.hovr_sg import SparseRelationDecoder
+from hovr_sg.evaluation.metrics import scene_graph_metrics
 from scripts.train import atomic_step, build_stage_schedule, finite_nested
 
 
@@ -70,3 +71,29 @@ def test_atomic_step_rejects_nonfinite_gradient():
 def test_checkpoint_finite_validator_rejects_nan():
     assert finite_nested({"state": torch.ones(2), "metadata": [1, "ok"]})
     assert not finite_nested({"state": torch.tensor([float("nan")])})
+
+
+def test_relation_metric_uses_global_query_slots():
+    ontology = SimpleNamespace(
+        leaf_to_idx={"man": 0, "cup": 1},
+        predicate_to_idx={"holding": 0},
+        leaf_names=lambda: ["man", "cup"],
+        predicate_names=lambda: ["holding"],
+        leaf_index=lambda label: {"man": 0, "cup": 1}[label],
+        predicate_index=lambda label: {"holding": 0}[label],
+    )
+    records = [{
+        "object_ids": [10, 20],
+        "boxes": torch.tensor([[0.0, 0.0, 0.5, 0.5], [0.5, 0.5, 1.0, 1.0]]),
+        "leaf_indices": torch.tensor([0, 1]),
+        "relations": [{"subject_id": 10, "object_id": 20, "predicate_index": 0}],
+    }]
+    predictions = [{
+        "objects": [
+            {"slot": 7, "label": "man", "box": [0.0, 0.0, 0.5, 0.5]},
+            {"slot": 3, "label": "cup", "box": [0.5, 0.5, 1.0, 1.0]},
+        ],
+        "relations": [{"subject_slot": 7, "object_slot": 3, "predicate": "holding", "score": 1.0}],
+    }]
+    metrics = scene_graph_metrics(records, predictions, ontology)
+    assert metrics["relation_Recall@50"] == 1.0

@@ -180,8 +180,13 @@ class SparseRelationDecoder(nn.Module):
         top = ness_all.topk(k, dim=1).indices
         pair = torch.gather(pair, 1, top[..., None].expand(-1, -1, pair.shape[-1]))
         ness = torch.gather(ness_all, 1, top)
-        s_idx = idx_s[None].expand(bsz, -1).gather(1, top)
-        o_idx = idx_o[None].expand(bsz, -1).gather(1, top)
+        # ``idx_s``/``idx_o`` are local indices inside the selected top-m
+        # object list.  Predictions and evaluation identify objects by their
+        # original decoder query slot, so convert back to global query ids.
+        selected_subject = chosen[:, idx_s]
+        selected_object = chosen[:, idx_o]
+        s_idx = selected_subject.gather(1, top)
+        o_idx = selected_object.gather(1, top)
         z_rel = F.normalize(self.rel_proj(pair), p=2.0, dim=-1, eps=1e-5)
         output = {
             "pair_features": pair,
