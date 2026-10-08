@@ -19,8 +19,11 @@ training:
   epochs: 10
   batch_size: 2
   num_workers: 2
-  lr: 0.0001
+  # Conservative defaults for Colab T4/mixed precision; override with --lr if needed.
+  lr: 0.00003
   weight_decay: 0.0001
+  adam_eps: 0.000001
+  max_grad_norm: 0.25
   image_size: 224
   device: auto
   amp: true

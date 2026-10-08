@@ -102,6 +102,32 @@ training:
 
 AMP chỉ được kích hoạt khi runtime có CUDA; CPU sẽ tự chạy FP32.
 
+### Xử lý lỗi `matrix contains invalid numeric entries`
+
+Nếu log xuất hiện `outputs.boxes has NaN` hoặc `outputs.leaf_logits has NaN`, đó là dấu
+hiệu một optimizer update trước đó đã bị tràn số. Bản training hiện tại đã có guard
+finite-value: kiểm tra output/loss/gradient trước matcher và trước optimizer step, tự bỏ
+qua batch không hữu hạn, giảm scale AMP khi cần, đồng thời dùng `AdamW eps` và gradient
+clipping bảo thủ hơn cho Colab. Cấu hình mặc định đã giảm learning rate xuống `3e-5`.
+
+Không resume từ `last.pt` được tạo sau khi log đã báo NaN, vì weights hoặc optimizer state
+có thể đã bị nhiễm NaN. Hãy chạy lại từ checkpoint sạch (hoặc từ đầu) với code mới:
+
+```bash
+!python scripts/train.py \
+  --config configs/hovr_sg.yaml \
+  --train-jsonl /content/data/train.jsonl \
+  --val-jsonl /content/data/val.jsonl \
+  --ontology ontology/ontology_v1.json \
+  --image-root /content/data/images \
+  --output-dir /content/runs/hovr_sg_stable \
+  --device cuda \
+  --lr 3e-5
+```
+
+Nếu vẫn có nhiều dòng `skip-nonfinite`, giảm tiếp `--lr` xuống `1e-5`, tắt
+`model.train_backbone`, và kiểm tra ảnh/dataset không chứa tensor không hữu hạn.
+
 ## 4. Resume khi Colab bị ngắt
 
 Colab nên lưu output vào Google Drive hoặc tải `last.pt` lên storage bền vững. Khi tiếp tục, dùng đúng config, ontology và dataset split:

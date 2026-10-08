@@ -292,6 +292,17 @@ def git_commit() -> str:
         return "unknown"
 
 
+def finite_parameters(modules) -> bool:
+    """Return whether all parameters and gradients in modules are finite."""
+    for module in modules:
+        for parameter in module.parameters():
+            if not torch.isfinite(parameter).all():
+                return False
+            if parameter.grad is not None and not torch.isfinite(parameter.grad).all():
+                return False
+    return True
+
+
 def build_checkpoint(
     epoch: int, stage: str, stage_schedule, amp_enabled: bool,
     encoder, model, prototypes, optimizer, scaler, cfg: dict,
@@ -494,6 +505,7 @@ def main() -> None:
             trainable_params,
             lr=float(cfg.get("training", {}).get("lr", 1e-4)),
             weight_decay=float(cfg.get("training", {}).get("weight_decay", 1e-4)),
+            eps=float(cfg.get("training", {}).get("adam_eps", 1e-8)),
         )
         if resume_state and resume_state.get("stage") == stage_name and resume_state.get("optimizer"):
             optimizer.load_state_dict(resume_state["optimizer"])
@@ -513,6 +525,7 @@ def main() -> None:
             if hasattr(loader, 'sampler') and hasattr(loader.sampler, 'set_epoch'):
                 loader.sampler.set_epoch(current_epoch)
             progress = tqdm(loader, desc=f"{stage_name} {current_epoch}/{epochs}")
+            skipped_nonfinite = 0
             for batch in progress:
                 images = batch["images"].to(device)
                 targets = make_targets(
@@ -526,28 +539,63 @@ def main() -> None:
                 with torch.set_grad_enabled(model_cfg.get("train_backbone", False)):
                     with torch.autocast(device_type=device.type, enabled=amp_enabled):
                         visual = encoder(images)
+                # Never pass an autocast tensor with invalid/extreme values to the FP32 detector.
+                visual = torch.nan_to_num(visual.float(), nan=0.0, posinf=10.0, neginf=-10.0)
+                visual = visual.clamp(-10.0, 10.0)
                 # Model forward + loss in FP32 — no autocast here.
                 out = model(
                     visual, prototypes.leaf, prototypes.groups, prototypes.relations,
                     top_m=int(model_cfg.get("top_m_objects", 16)),
                     top_k_pairs=int(model_cfg.get("top_k_pairs", 64)),
                 )
+                if not all(torch.isfinite(value).all() for value in (
+                    out.boxes, out.objectness_logits, out.z_leaf, out.leaf_logits,
+                    out.group_logits, out.relations["relationness_logits"],
+                )):
+                    skipped_nonfinite += 1
+                    optimizer.zero_grad(set_to_none=True)
+                    progress.set_postfix(stage=stage_name, loss="skip-nonfinite-output")
+                    continue
                 matches = matcher(out, batch["samples"])
                 terms = compute_loss(out, targets, matches, prototypes, ontology, active_weights)
                 if uncertainty_weighter is not None:
                     terms["total"] = uncertainty_weighter(terms, active_weights)
+                if not torch.isfinite(terms["total"]):
+                    skipped_nonfinite += 1
+                    optimizer.zero_grad(set_to_none=True)
+                    progress.set_postfix(stage=stage_name, loss="skip-nonfinite-loss")
+                    continue
                 if scaler.is_enabled():
                     scaler.scale(terms["total"]).backward()
                     scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(trainable_params, 0.5)
-                    scaler.step(optimizer)
-                    scaler.update()
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        trainable_params, float(cfg.get("training", {}).get("max_grad_norm", 0.5))
+                    )
+                    if torch.isfinite(grad_norm) and finite_parameters((encoder, model, prototypes)):
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        skipped_nonfinite += 1
+                        optimizer.zero_grad(set_to_none=True)
+                        # ``unscale_`` already records the invalid gradient; step() will
+                        # be skipped by GradScaler and update() will reduce its scale.
+                        scaler.step(optimizer)
+                        scaler.update()
                 else:
                     terms["total"].backward()
-                    torch.nn.utils.clip_grad_norm_(trainable_params, 0.5)
-                    optimizer.step()
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        trainable_params, float(cfg.get("training", {}).get("max_grad_norm", 0.5))
+                    )
+                    if torch.isfinite(grad_norm) and finite_parameters((encoder, model, prototypes)):
+                        optimizer.step()
+                    else:
+                        skipped_nonfinite += 1
+                        optimizer.zero_grad(set_to_none=True)
                 running += float(terms["total"].detach())
                 progress.set_postfix(stage=stage_name, loss=f"{running / max(progress.n, 1):.4f}")
+
+            if skipped_nonfinite:
+                print(f"[WARN] skipped {skipped_nonfinite} non-finite batch update(s) in epoch {current_epoch}")
 
             val_metrics = {}
             if val_loader is not None and (current_epoch % val_frequency == 0 or current_epoch == epochs):
