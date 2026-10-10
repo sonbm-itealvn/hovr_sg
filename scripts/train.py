@@ -152,6 +152,16 @@ def compute_loss(out, targets, matches, prototypes: PrototypeBank, ontology: Ont
     predicate_targets = torch.full(
         relationness.shape, -1, dtype=torch.long, device=relationness.device
     )
+    relation_debug = targets.get("relation_debug")
+    if relation_debug is not None:
+        relation_debug.update({
+            "relation_annotations": 0,
+            "matched_endpoint_annotations": 0,
+            "pair_found_annotations": 0,
+            "relation_positive_targets": 0,
+            "predicate_positive_targets": 0,
+            "relation_candidate_pairs": int(relationness.numel()),
+        })
     for batch_index, sample in enumerate(targets["raw_samples"]):
         query_for_object = {}
         if batch_index < len(matches):
@@ -162,17 +172,26 @@ def compute_loss(out, targets, matches, prototypes: PrototypeBank, ontology: Ont
         pair_s = out.relations["subject_slot"][batch_index]
         pair_o = out.relations["object_slot"][batch_index]
         for rel in sample["relations"]:
+            if relation_debug is not None:
+                relation_debug["relation_annotations"] += 1
             subject_query = query_for_object.get(int(rel["subject_id"]))
             object_query = query_for_object.get(int(rel["object_id"]))
             if subject_query is None or object_query is None:
                 continue
+            if relation_debug is not None:
+                relation_debug["matched_endpoint_annotations"] += 1
             # Relation decoder emits original/global query ids, not local
             # indices inside the top-m selected object list.
             hits = ((pair_s == subject_query) & (pair_o == object_query)).nonzero(as_tuple=False)
             if len(hits):
+                if relation_debug is not None:
+                    relation_debug["pair_found_annotations"] += 1
                 relation_index = int(hits[0])
                 relation_targets[batch_index, relation_index] = 1.0
                 predicate_targets[batch_index, relation_index] = int(rel["predicate_index"])
+    if relation_debug is not None:
+        relation_debug["relation_positive_targets"] = int(relation_targets.sum().item())
+        relation_debug["predicate_positive_targets"] = int((predicate_targets >= 0).sum().item())
     relation_loss = torch.nn.functional.binary_cross_entropy_with_logits(
         relationness, relation_targets
     )
@@ -418,6 +437,10 @@ def main() -> None:
     parser.add_argument("--backbone-name", default=None)
     parser.add_argument("--train-backbone", action="store_true")
     parser.add_argument("--resume", default=None, help="Resume from a last.pt/checkpoint path")
+    parser.add_argument(
+        "--debug-relations", action="store_true",
+        help="Log relation target assignment counts per batch and epoch",
+    )
     args = parser.parse_args()
     if args.epochs is not None and args.additional_epochs is not None:
         raise ValueError("Use either --epochs or --additional-epochs, not both")
@@ -428,6 +451,8 @@ def main() -> None:
     cfg = load_yaml(args.config)
     cfg = copy.deepcopy(cfg)
     model_cfg = cfg.setdefault("model", {})
+    debug_relations = args.debug_relations or bool(cfg.get("training", {}).get("debug_relations", False))
+    debug_relation_interval = max(1, int(cfg.get("training", {}).get("debug_relation_interval", 50)))
     if args.backbone:
         model_cfg["backbone"] = args.backbone
     if args.backbone_name:
@@ -584,6 +609,15 @@ def main() -> None:
             model.train()
             prototypes.train()
             running = 0.0
+            relation_debug_epoch = {
+                "relation_annotations": 0,
+                "matched_endpoint_annotations": 0,
+                "pair_found_annotations": 0,
+                "relation_positive_targets": 0,
+                "predicate_positive_targets": 0,
+                "relation_candidate_pairs": 0,
+                "batches": 0,
+            }
             if hasattr(loader, 'sampler') and hasattr(loader.sampler, 'set_epoch'):
                 loader.sampler.set_epoch(current_epoch)
             progress = tqdm(loader, desc=f"{stage_name} {current_epoch}/{epochs}")
@@ -596,6 +630,9 @@ def main() -> None:
                     device, len(ontology.group_names()),
                 )
                 targets["raw_samples"] = batch["samples"]
+                relation_debug_batch = {} if debug_relations else None
+                if relation_debug_batch is not None:
+                    targets["relation_debug"] = relation_debug_batch
                 optimizer.zero_grad(set_to_none=True)
                 # FP16 autocast wraps ONLY the frozen CLIP backbone (saves ~60% VRAM).
                 # The detector/decoder runs entirely in FP32 to prevent NaN overflows.
@@ -627,6 +664,21 @@ def main() -> None:
                     continue
                 matches = matcher(out, batch["samples"])
                 terms = compute_loss(out, targets, matches, prototypes, ontology, active_weights)
+                if relation_debug_batch is not None:
+                    for key, value in relation_debug_batch.items():
+                        relation_debug_epoch[key] = relation_debug_epoch.get(key, 0) + value
+                    relation_debug_epoch["batches"] += 1
+                    if progress.n % debug_relation_interval == 0:
+                        print(
+                            "[REL_DEBUG] "
+                            f"epoch={current_epoch} batch={progress.n} "
+                            f"annotations={relation_debug_batch['relation_annotations']} "
+                            f"matched_endpoints={relation_debug_batch['matched_endpoint_annotations']} "
+                            f"pair_found={relation_debug_batch['pair_found_annotations']} "
+                            f"positive_targets={relation_debug_batch['relation_positive_targets']} "
+                            f"predicate_targets={relation_debug_batch['predicate_positive_targets']} "
+                            f"candidate_pairs={relation_debug_batch['relation_candidate_pairs']}"
+                        )
                 if uncertainty_weighter is not None:
                     terms["total"] = uncertainty_weighter(terms, active_weights)
                 if not torch.isfinite(terms["total"]):
@@ -649,6 +701,18 @@ def main() -> None:
 
             if skipped_nonfinite:
                 print(f"[WARN] skipped {skipped_nonfinite} non-finite batch update(s) in epoch {current_epoch}")
+            if debug_relations:
+                print(
+                    "[REL_DEBUG_EPOCH] "
+                    f"epoch={current_epoch} stage={stage_name} "
+                    f"batches={relation_debug_epoch['batches']} "
+                    f"annotations={relation_debug_epoch['relation_annotations']} "
+                    f"matched_endpoints={relation_debug_epoch['matched_endpoint_annotations']} "
+                    f"pair_found={relation_debug_epoch['pair_found_annotations']} "
+                    f"positive_targets={relation_debug_epoch['relation_positive_targets']} "
+                    f"predicate_targets={relation_debug_epoch['predicate_positive_targets']} "
+                    f"candidate_pairs={relation_debug_epoch['relation_candidate_pairs']}"
+                )
 
             val_metrics = {}
             if val_loader is not None and (current_epoch % val_frequency == 0 or current_epoch == epochs):
@@ -668,6 +732,7 @@ def main() -> None:
                 "epoch": current_epoch, "stage": stage_name,
                 "train_loss": running / max(len(loader), 1),
                 "validation": val_metrics, "selection_score": score,
+                "relation_debug": relation_debug_epoch if debug_relations else None,
             })
             checkpoint = build_checkpoint(
                 current_epoch, stage_name, stage_schedule, amp_enabled,
