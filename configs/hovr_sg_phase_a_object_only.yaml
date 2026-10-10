@@ -1,0 +1,138 @@
+# HOVR-SG Phase A: object-only detector pretraining
+#
+# Mục tiêu:
+#   1. Chỉ huấn luyện object detector/query decoder.
+#   2. Giữ CLIP vision backbone đóng băng để ổn định và tiết kiệm VRAM.
+#   3. Không huấn luyện relation head ở Phase A.
+#   4. Chỉ chuyển sang Phase B khi object_AP50 và object_mAP50_95 đã cải thiện rõ.
+#
+# Chạy trên Google Colab:
+#   python scripts/train.py \
+#     --config configs/hovr_sg_phase_a_object_only.yaml \
+#     --train-jsonl /content/data/train.jsonl \
+#     --val-jsonl /content/data/val.jsonl \
+#     --ontology ontology/ontology_v1.json \
+#     --image-root /content/data/images \
+#     --output-dir /content/runs/hovr_sg_phase_a_object_only \
+#     --device cuda
+
+seed: 42
+
+model:
+  # CLIP pretrained is required for the real open-vocabulary run.
+  # tiny_cnn is only for smoke tests and must not be used for the release run.
+  backbone: clip
+  backbone_name: openai/clip-vit-base-patch32
+  local_files_only: false
+
+  # Phase A trains only detector modules; keep the visual encoder frozen.
+  train_backbone: false
+  unfreeze_last_n_layers: 0
+
+  # Must match CLIP ViT-B/32 and the HOVR-SG architecture.
+  visual_dim: 768
+  d_model: 256
+  d_latent: 512
+  num_queries: 64
+
+  # Keep object candidate count consistent with Phase B.
+  # Phase B may increase top_k_pairs, but top_m_objects should remain stable
+  # so the detector checkpoint and relation stage see the same query layout.
+  top_m_objects: 16
+  top_k_pairs: 64
+
+  image_size: 224
+  image_mean: [0.48145466, 0.4578275, 0.40821073]
+  image_std: [0.26862954, 0.26130258, 0.27577711]
+
+training:
+  # Dataset evidence: approximately 500 batches/epoch at batch_size=2.
+  epochs: 15
+  batch_size: 2
+  num_workers: 2
+
+  # Detector heads are randomly initialized while CLIP is frozen. This is
+  # higher than the conservative joint-training LR but still moderate for T4.
+  lr: 0.00005
+  weight_decay: 0.0001
+  adam_eps: 0.000001
+  max_grad_norm: 0.25
+
+  image_size: 224
+  device: auto
+
+  # Keep the detector and loss graph in FP32 until the object-only pilot is
+  # proven stable. AMP can be tested later, not during this baseline run.
+  amp: false
+
+  save_every: 1
+
+  # Optional relation debug is disabled in Phase A because relation losses are
+  # intentionally disabled. Enable from CLI only if pair coverage is needed:
+  #   --debug-relations
+  debug_relations: false
+  debug_relation_interval: 50
+
+augmentation:
+  enabled: true
+  hflip_prob: 0.5
+  color_jitter: true
+  brightness: 0.15
+  contrast: 0.15
+  saturation: 0.15
+  hue: 0.03
+  random_resized_crop: false
+
+matching:
+  # Matching remains active for object targets; relation matching is not used
+  # as a loss in this phase.
+  cost_class: 1.0
+  cost_bbox: 5.0
+  cost_objectness: 1.0
+
+loss:
+  # Active object/hierarchy terms during detector_warmup.
+  objectness: 1.0
+  leaf: 1.0
+  group: 0.35
+  ancestor: 0.25
+  sibling: 0.25
+  box_l1: 5.0
+
+  # Explicitly disabled by stage_loss_weights for detector_warmup. Keeping
+  # zero here documents the intended Phase A behavior and prevents accidental
+  # relation optimization if the stage configuration is edited later.
+  relationness: 0.0
+  predicate: 0.0
+  uncertainty_weighting: false
+
+  # Keep disabled for this baseline; relation repeat-factor sampling is not
+  # relevant until Phase B.
+  repeat_factor_threshold: 0.0
+
+stages:
+  # All 15 epochs are detector_warmup. No hierarchical, relation, or joint
+  # stage is appended by the scheduler.
+  detector_warmup_epochs: 15
+  hierarchical_epochs: 0
+  relation_epochs: 0
+  joint_epochs: 0
+
+ontology:
+  path: ontology/ontology_v1.json
+  text_dim: 512
+  prompt_template: "a photo of a {label}"
+  trainable_prototypes: false
+
+paths:
+  output_dir: runs/hovr_sg_phase_a_object_only
+  checkpoint: null
+
+validation:
+  frequency: 1
+  # Select the detector checkpoint, not a relation metric that cannot be
+  # meaningful before relation training begins.
+  selection_metric: object_mAP50_95
+
+evaluation:
+  top_k_triplets: [20, 50, 100]
